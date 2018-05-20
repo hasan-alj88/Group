@@ -13,7 +13,7 @@ def create_logger():
     # Handlers..
     # Stream handler
     stream_handler = logging.StreamHandler()
-    stream_handler.setLevel(logging.DEBUG)
+    stream_handler.setLevel(logging.ERROR)
     # log file handler
     file_handler = RotatingFileHandler("logs\\GroupPythonProject.log", maxBytes=2 ** 20, backupCount=100)
     file_handler.setLevel(logging.DEBUG)
@@ -23,7 +23,7 @@ def create_logger():
     stream_handler.setFormatter(log_format)
     file_handler.setFormatter(log_format)
     # add handles to logger
-    log.addHandler(stream_handler)
+    # log.addHandler(stream_handler)
     log.addHandler(file_handler)
     return log
 
@@ -37,7 +37,6 @@ def log_decorator(defined_logger):
     exceptions should one occur
     @param defined_logger: The logging object
     """
-
     def decorator(func):
         @functools.wraps(func)
         def log_wrapper(*args, **kwargs):
@@ -59,5 +58,4 @@ def log_decorator(defined_logger):
                 raise err
 
         return log_wrapper
-
     return decorator

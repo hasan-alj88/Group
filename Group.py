@@ -1,8 +1,9 @@
+from inspect import getsource
+from typing import TypeVar
+
 from Permutation import *
 from PrimeLib import *
 from log_configuration import logger, log_decorator
-from typing import TypeVar
-from inspect import getsource
 
 Group_object = TypeVar('Group_object', bound='Group')
 
@@ -11,24 +12,24 @@ Group_object = TypeVar('Group_object', bound='Group')
 class Group(object):
     def __init__(self):
         self.Order = 1
-        self._element_labels = ['e', '1']
-        self.Cayley = Table.from_2d_list([[0, 1], [1, 0]])
-        self.__is_abeailan = None
-        self.__is_simple = None
-        self.__is_solvable = None
-        self.__subgroups = None
+        self.Cayley = Table.from_data_frame(pd.DataFrame(['0']))
+        self._element_labels = pd.Series(data=['e'])
+        self.name = 'feature will available in a later version'
+        self.reference = 'feature will available in a later version'
+        self._is_abeailan = None
+        self._is_simple = None
+        self._is_solvable = None
+        self._subgroups = None
 
     def __str__(self):
-        s = 'Group Name:\t{}\n'.format('<feature will available next version>')
-        s += 'Group Ref:\t{}\n'.format('<feature will available next version>')
+        s = 'Group Name:\t{}\n'.format(self.name)
+        s += 'Group Reference:\t{}\n'.format(self.reference)
         s += 'Group Order:\t{}\n'.format(self.Order)
         s += 'Abeailan group:\t{}\n'.format(self.is_abeailan)
-        s += 'solvable : {}'.format('<feature will available next version>\n')
+        s += 'solvable : {}\n'.format(self.is_solvable)
         s += 'Multiplication table raw data:-\n' + str(self.Cayley) + '\n\n'
-        s += 'Element Lables:-\n'
-        for el, label in zip(self.element_set, self.element_labels):
-            s += str(el)+'\t-> '+label+'\n'
-        s += self.multiplication_table + '\n\n'
+        s += 'Element Lables:-\n{}\n'.format(self.element_labels)
+        s += 'Multiplication table :-\n{}\n'.format(self.multiplication_table)
         return s
 
     @classmethod
@@ -55,17 +56,19 @@ class Group(object):
 
     @classmethod
     # @log_decorator(logger)
-    def from_table(cls, table):
+    def from_table(cls, table: Table_object) -> Group_object:
         """
         Create a Group with input multiplication table
-        :param table: The Caylay Table (aka multiplication table)
+        :param table: The Caylay table (aka multiplication table)
         :return: Group Object
         """
-        assert isinstance(table, Table)
         # if not table.is_caley_table:raise ValueError
         group = cls()
-        group.Order = len(table) + 1  # python counts 0 to (n-1)
+        group.Order = len(table)
         group.Cayley = table
+        group.element_labels = table.labels
+        logger.debug('Group Order = {}'.format(group.Order))
+        logger.debug('table input:-{}'.format(group.Cayley))
         return group
 
     @classmethod
@@ -88,17 +91,16 @@ class Group(object):
                      + ' with the following definition:-\n{}\nElements are {}')
                     .format(operation, getsource(operation), element_set))
         order = len(element_set)
-        mul_table = [[None for i in range(order)] for j in range(order)]
+        mul_table = pd.DataFrame(index=range(order), columns=range(order))
+        logger.debug('Empty multiplication table is created:-\n{}'.format(mul_table))
         logger.debug('Constructing the multiplication table:-')
-        logger.debug([len(i) for i in mul_table])
         for (xi, x), (yi, y) in itertools.product(enumerate(element_set), repeat=2):
             z = parse(operation(x, y))
-            logger.debug('Multiplication Table[{}][{}] = {}'.format(xi, yi, z))
+            # logger.debug('Multiplication table[{}][{}] = {}'.format(xi, yi, z))
             mul_table[xi][yi] = z
-        logger.info('The result multiplication table:\n{}'.format(array2d_to_str(mul_table)))
-        mul_table = Table.from_2d_list(mul_table)
+        logger.info('The result multiplication table:\n{}'.format(mul_table))
+        mul_table = Table.from_data_frame(mul_table)
         group = cls.from_table(mul_table)
-        group.element_labels = list(map(parse, element_set))
         return group
 
     @classmethod
@@ -156,7 +158,7 @@ class Group(object):
 
     @classmethod
     def cyclic(cls, order: int):
-        return Group.from_definition(lambda x, y: (x+y) % order, list(range(order)))
+        return Group.from_definition(lambda x, y: (x + y) % order, list(range(order)))
 
     def __mul__(self, other):
         return Group.direct_product(self, other)
@@ -164,19 +166,34 @@ class Group(object):
     def __len__(self):
         return self.Order - 1
 
+    @property
+    def multiplication_table(self):
+        self.Cayley.table = self.Cayley.table.astype(str)
+        print(self.Cayley.table.columns.to_series().groupby(self.Cayley.table.dtypes).groups)
+        print(type(self.Cayley.labels.values.tolist()))
+        return self.Cayley.table.replace(
+            value=self.Cayley.labels.values.tolist(),
+            to_replace=list(self.Cayley.table.index))
+
     # Element Iterators
     @property
     def element_set(self):
-        return range(len(self) + 1)
+        return range(len(self))
 
     # Group method
     # @log_decorator(logger)
-    def multiply(self, x: int, y: int)-> int:
+    def multiply(self, x: int, y: int) -> int:
         return self.Cayley.get_item(x, y)
 
     @property
     def is_simple(self):
         return len(self.subgroups) < 2
+
+    @property
+    def is_solvable(self):
+        if self._is_solvable is not None:
+            return 'feature will available in a later version'
+        return 'feature will available in a later version'
 
     @property
     # @log_decorator(logger)
@@ -188,18 +205,18 @@ class Group(object):
         x * y = y * x must be True for all group elements
         """
         # to avoid double calculation
-        if self.__is_abeailan is not None:
-            return self.__is_abeailan
+        if self._is_abeailan is not None:
+            return self._is_abeailan
 
-        self.__is_abeailan = True
+        self._is_abeailan = True
         for x, y in itertools.product(self.element_set, repeat=2):
             if x is y:
                 continue
             if self.multiply(x, y) != self.multiply(y, x):
                 logger.info('{} * {} != {} * {} \tThus the Group is non-abeailan'.format(x, y, y, x))
-                self.__is_abeailan = False
+                self._is_abeailan = False
                 break
-        return self.__is_abeailan
+        return self._is_abeailan
 
     # Element methods
     Identity = 0  # Standard for all Groups
@@ -243,7 +260,7 @@ class Group(object):
             orbit.append(ele)
         return orbit
 
-    def element_order(self, element: int)->int:
+    def element_order(self, element: int) -> int:
         """
         Element x have order n where x^n=e (group Identity)
         :param element: element in the Group
@@ -257,15 +274,17 @@ class Group(object):
         return self._element_labels
 
     @element_labels.setter
-    def element_labels(self, labels):
+    def element_labels(self, labels: pd.Series):
         if len(self) > len(labels):
-            raise ValueError(str(labels))  # Lables does incloude all elements
+            # Lables does incloude all elements
+            raise ValueError(str(labels))
         if len(set(labels)) != len(labels):
-            raise ValueError  # Lables must be Unique
+            # Lables must be Unique
+            raise ValueError('Lables must be Unique')
+        self.Cayley.table.labels = labels
         self._element_labels = labels
 
-    def label_of(self, element):
-        assert (isinstance(element, int))
+    def label_of(self, element: int) -> str:
         try:
             return self.element_labels[element]
         except IndexError:
@@ -299,8 +318,8 @@ class Group(object):
     def subgroups(self):
         """List the proper subgroups of the Group G"""
         # to avoid double calculation
-        if self.__subgroups is not None:
-            return self.__subgroups
+        if self._subgroups is not None:
+            return self._subgroups
 
         logger.debug('Finding subgroups of group of order {}'.format(len(self)))
         if prime_test(self.Order):
@@ -330,8 +349,8 @@ class Group(object):
                 except Exception:
                     logger.debug('{} of size {} is not subgroup'.format(subgroup_elements, len(subgroup_elements)))
                     continue
-        self.__subgroups = subgroup_list
-        return self.__subgroups
+        self._subgroups = subgroup_list
+        return self._subgroups
 
     @property
     # @log_decorator(logger)
@@ -368,15 +387,6 @@ class Group(object):
                 generators_list.append(gens)
         return generators_list
 
-    @property
-    def multiplication_table(self):
-        s = 'Multiplication Table:-\n'
-        for row in self.element_set:
-            for col in self.element_set:
-                s += self.label_of(self.multiply(row, col)) + '\t'
-            s = s[:-1]
-            s += '\n'
-        return s
 
     @property
     def export_data_to_dict(self):
@@ -394,12 +404,50 @@ class Group(object):
                                     'subgroup': sg['subgroup'].export_data_to_dict} for sg in temp_subgroups]
         return group_data
 
-
     def export_data_to_json_file(self, file_name):
         with open(file_name, 'w') as file:
             json.dump(self.export_data_to_dict, file, indent=4)
         return
 
+    @property
+    def to_html(self) -> str:
+        def tag(tag_name: str, inner_text: str, attributes: dict = None, close_tag=True):
+            output = '<' + tag_name
+            if attributes is not None:
+                for att, value in attributes.items():
+                    output += ' ' + att + '=' + '"' + value + '"'
+            output += '>' + inner_text
+            if close_tag:
+                output += '</' + tag_name + '>'
+            return output
 
+        group_properties = pd.DataFrame(
+            columns=['property'],
+            index=['Order', 'Abeailan', 'Simple', 'solvable'],
+            data=[self.Order, self.is_abeailan, self.is_simple, self.is_solvable]
+        )
 
+        content = tag('h1', 'Group Name:')
+        content += tag('p', '{}'.format(self.name))
+        content += tag('h1', 'Group Reference:')
+        content += tag('p', '{}'.format(self.reference))
+        content += tag('h1', 'Group properties:')
+        content += group_properties.to_html()
+        content += tag('h1', 'Multiplication table raw data:-')
+        content += tag('p', self.Cayley.table.to_html())
+        content += tag('h1', 'Element labels:')
+        label_list = self.Cayley.labels.to_frame()
+        label_list.columns = ['Label']
+        content += tag('p', label_list.to_html())
+        content += tag('h1', 'Group Name:')
+        content += tag('p', self.Cayley.table.to_html())
+        html_output = tag('Title', self.name)
+        html_output += tag('link', '', attributes={'rel': 'stylesheet', 'href': 'stylesheet.css'}, close_tag=False)
+        html_output = tag('head', html_output)
+        html_output += tag('body', content)
+        return '<!DOCTYPE html>' + tag('html', html_output)
 
+    def export_to_html(self, filename):
+        with open(filename, 'w') as html_file:
+            html_file.write(self.to_html)
+            print('HTML File have been written in ' + filename + '.\n')
