@@ -9,8 +9,8 @@ import pandas as pd
 
 from log_configuration import logger
 
-Table_Type = TypeVar('Table_Type', bound='table')
-Permutation_Type = TypeVar('Permutation_Type', bound='Permutation')
+Table_object = TypeVar('Table_object', bound='table')
+Permutation_object = TypeVar('Permutation_object', bound='Permutation')
 
 
 # from log_configuration import logger, log_decorator
@@ -40,15 +40,15 @@ class Permutation(object):
             string += ')'
         return string if len(string) > 0 else '()'
 
-    def __add__(self, other: Permutation_Type) -> Permutation_Type:
+    def __add__(self, other: Permutation_object) -> Permutation_object:
         combination = Permutation()
         combination.Swaps = self.Swaps + other.Swaps
         return Permutation.of_the_array(combination.permutated_array)
 
-    def __sub__(self, other: Permutation_Type) -> Permutation_Type:
+    def __sub__(self, other: Permutation_object) -> Permutation_object:
         return self + other.inv
 
-    def __eq__(self, other: Permutation_Type) -> Permutation_Type:
+    def __eq__(self, other: Permutation_object) -> Permutation_object:
         assert (isinstance(Permutation, other))
         return self.permutated_array == other.permutated_array
 
@@ -93,7 +93,7 @@ class Permutation(object):
         return cls.of_the_array(input_array)
 
     @classmethod
-    def of_input_series_object(cls, series: pd.Series) -> Permutation_Type:
+    def of_input_series_object(cls, series: pd.Series) -> Permutation_object:
         series.replace(to_replace=series.index, value=list(series), inplace=True)
         return Permutation.of_input_array(list(series), series.index)
 
@@ -219,7 +219,7 @@ class Permutation(object):
         return len(self.Swaps) == 0
 
     @property
-    def inv(self) -> Permutation_Type:
+    def inv(self) -> Permutation_object:
         """
         if x' is the permutation inverse of x then
         x * x' = () idel permutation
@@ -235,7 +235,7 @@ class Permutation(object):
             arr = Permutation.apply_swap(arr, index1, index2)
         return p
 
-    def is_derangement_of(self, other: Permutation_Type) -> bool:
+    def is_derangement_of(self, other: Permutation_object) -> bool:
         """
         Compare this Permutation object with 'other' Permutation object
          and confirms if they a derangement of each other.
@@ -251,7 +251,7 @@ class Permutation(object):
         else:
             return True
 
-    def elements_in_place(self, other: Permutation_Type) -> list:
+    def elements_in_place(self, other: Permutation_object) -> list:
         """
         Compare this Permutation object with 'other' Permutation object and returns the elements
          whom are the same on both permutation objects.
@@ -316,7 +316,7 @@ class Table(object):
         return table
 
     @classmethod
-    def from_data_frame(cls, table_input: pd.DataFrame) -> Table_Type:
+    def from_data_frame(cls, table_input: pd.DataFrame) -> Table_object:
         table = cls()
         table.table = table_input
         table.normalize_table()
@@ -389,12 +389,12 @@ class Table(object):
         return condition1 and condition2
 
     def row(self, row: int) -> pd.Series:
-        return self.table.iloc[row, :]
+        return self.table.ix[row, :]
 
     def column(self, col: int) -> pd.Series:
-        return self.table.iloc[:, col]
+        return self.table.ix[:, col]
 
-    def difference_map(self, other: Table_Type) -> list:
+    def difference_map(self, other: Table_object) -> list:
         ret = list()
         for row_self, row_other in itertools.zip_longest(self.table, other.Table):
             row = list()
