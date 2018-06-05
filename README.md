@@ -6,12 +6,12 @@ A python library that analyze multiplication tables and determine corresponding 
     
 >- **Closure**: 
  - For all elements in G the result of binary operation (a ✕ b) is also in group element set.
-- **Associativity**:
+>- **Associativity**:
  - For all a, b and c in G, $(a ✕ b) ✕ c = a ✕ (b ✕ c)$.
-- **Identity element**:
+>- **Identity element**:
  - There exists an element **e** in G such that, for every element a in G, the equation 
 $e ✕ a = a ✕ e = a$
-- **Inverse element**:
+>- **Inverse element**:
  - For each a in G, there exists an element b in G, commonly denoted $a^{-1}$ , such that 
 $a ✕ b = b ✕ a = e$
 where e is the identity element.
