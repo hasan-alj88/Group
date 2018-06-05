@@ -2,18 +2,18 @@
 A python library that analyze multiplication tables and determine corresponding Group and its properties in according to Group Theory.
 
 ## What is a Group?
-> Let concider group G with operation * $(G,*)$ and <b>a</b>, <b>b</b> and <b>c</b> are elements in the group; Then:-
->- **Closure**: 
-> - For all elements in G the result of binary operation (a ✕ b) is also in group element set.
->- **Associativity**:
-> - For all a, b and c in G, $(a ✕ b) ✕ c = a ✕ (b ✕ c)$.
->- **Identity element**:
-> - There exists an element **e** in G such that, for every element a in G, the equation 
->$e ✕ a = a ✕ e = a$
->- **Inverse element**:
-> - For each a in G, there exists an element b in G, commonly denoted $a^{-1}$ , such that 
->$a ✕ b = b ✕ a = e$
->where e is the identity element.
+ Let concider group G with operation * $(G,*)$ and <b>a</b>, <b>b</b> and <b>c</b> are elements in the group; Then:-
+- **Closure**: 
+ - For all elements in G the result of binary operation (a ✕ b) is also in group element set.
+- **Associativity**:
+ - For all a, b and c in G, $(a ✕ b) ✕ c = a ✕ (b ✕ c)$.
+- **Identity element**:
+ - There exists an element **e** in G such that, for every element a in G, the equation 
+$e ✕ a = a ✕ e = a$
+- **Inverse element**:
+ - For each a in G, there exists an element b in G, commonly denoted $a^{-1}$ , such that 
+$a ✕ b = b ✕ a = e$
+where e is the identity element.
 
 More on Mathamatical defenination of a Group go to https://en.wikipedia.org/wiki/Group_(mathematics)
 
