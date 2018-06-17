@@ -1,0 +1,9 @@
+.idea/Group.iml
+.idea/misc.xml
+.idea/modules.xml
+.idea/vcs.xml
+.idea/workspace.xml
+.ipynb_checkpoints/Untitled-checkpoint.ipynb
+__pycache__/
+images/
+logs/

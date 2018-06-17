@@ -7,7 +7,6 @@ from typing import TypeVar
 
 import pandas as pd
 
-Table_Type = TypeVar('Table_Type', bound='table')
 Permutation_Type = TypeVar('Permutation_Type', bound='Permutation')
 
 

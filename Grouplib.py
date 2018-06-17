@@ -18,6 +18,46 @@ def group_db():
         yield con
 
 
+def label_handling_decorator(number_of_element_input: int):
+    def label_handling(func):
+        def label_handling_wrapper(*args, **kwargs):
+            """
+            Group methods use integers to represent elements
+            This decorator function is used to handel element labels as input
+            :param args:
+            :param kwargs:
+            :return:
+            """
+
+            def element_input(element_in):
+                if isinstance(element_in, str):
+                    return args[0].label_of(element_in)
+                else:
+                    return element_in
+
+            args = list(args)
+            for el in range(1, number_of_element_input + 1):
+                try:
+                    args[el] = element_input(args[el])
+                except IndexError:
+                    raise ValueError('There is no {}th parameter'.format(el))
+            args = tuple(args)
+
+            ret = func(*args, **kwargs)
+
+            if args[0].display_labels:
+                if isinstance(ret, pd.DataFrame):
+                    ret.replace(args[0].element_labels.to_dict(), inplace=True)
+                    ret.fillna(value='', inplace=True)
+                else:
+                    ret = args[0].label_of(ret)
+            return ret
+
+        return label_handling_wrapper
+
+    return label_handling
+
+
 # @log_decorator(logger)
 class Group(object):
     def __init__(self,
@@ -38,15 +78,12 @@ class Group(object):
 
     def __str__(self):
         s = 'Group Name:\t{}\n'.format(self.name)
-        # s += 'Group Reference:\t{}\n'.format(self.reference)
         s += 'Group order:\t{}\n'.format(self.order)
         s += 'Abeailan group:\t{}\n'.format(self.is_abeailan)
         s += 'solvable : {}\n'.format(self.is_solvable)
-        s += 'Multiplication table raw data:-\n' + str(self.cayley_table) + '\n\n'
         s += 'Element Lables:-\n'
         for el, label in self.element_labels.to_dict().items():
             s += '{}\t->\t{}\n'.format(el, label)
-        s += 'Multiplication table :-\n{}\n'.format(self.multiplication_table)
         return s
 
     def __mul__(self, other):
@@ -226,8 +263,14 @@ class Group(object):
 
     @classmethod
     def symmetric(cls, n: int, name: str = None) -> Group_Type:
+        """
+        Creates the symmetric group of the all permutations of n elements
+        :param n:
+        :param name: group name
+        :return:
+        """
         if name is None:
-            name = 'S_{}'.format(n)
+            name = 'S{}'.format(n)
         element_list = [p for p in Permutation.generator(n)]
         return Group.from_definition(operation=lambda x, y: x + y,
                                      element_set=element_list,
@@ -260,9 +303,16 @@ class Group(object):
                 expression = 'e' if expression == '' else expression
             return expression
 
-        return Group.from_definition(lambda x, y: reduce_expression(x + y),
-                                     element_set=element_list,
-                                     parse=lambda x: x)
+        D = Group.from_definition(lambda x, y: reduce_expression(x + y),
+                                  element_set=element_list,
+                                  parse=lambda x: x)
+        for ind, el in enumerate(element_list):
+            r_count = el.count('r')
+            f_count = el.count('f')
+            if r_count > 1:
+                element_list[ind] = 'r^{}'.format(r_count) if f_count == 0 else 'fr^{}'.format(r_count)
+        D.element_labels = pd.Series(element_list)
+        return D
 
     # properties
     @property
@@ -271,7 +321,10 @@ class Group(object):
         Outputs the multiplication table with the element tables
         :return: pandas.DataFrame: multiplication table
         """
-        return self.cayley_table.replace(self.element_labels.to_dict())
+        if self.display_labels:
+            return self.cayley_table.replace(self.element_labels.to_dict())
+        else:
+            return self.cayley_table
 
     # Element Iterators
     @property
@@ -279,6 +332,7 @@ class Group(object):
         return [i for i in range(self.order)]
 
     # @log_decorator(logger)
+    @label_handling_decorator(2)
     def multiply(self, x: int, y: int) -> int:
         return self.cayley_table.iat[x, y]
 
@@ -355,6 +409,7 @@ class Group(object):
                 return x
         raise ValueError('All elements must have inverse (Group Axiom)')
 
+    @label_handling_decorator(2)
     def conjugate(self, a: int, b: int) -> int:
         """
 
@@ -365,6 +420,7 @@ class Group(object):
         return self.multiply_left_to_right([b, a, self.inverse(b)])
 
     @property
+    @label_handling_decorator(0)
     def center(self) -> pd.DataFrame:
         center_list = set()
         for a in self.element_set:
@@ -373,21 +429,23 @@ class Group(object):
                     break
             else:
                 center_list.add(a)
-        center_list = pd.DataFrame({'Center': center_list})
-        if self.display_labels:
-            center_list.replace(self.element_labels.to_dict(), inplace=True)
+        center_list = pd.DataFrame(data=[_ for _ in center_list], columns=['Center'])
         return center_list
 
+    @label_handling_decorator(1)
     def conjugacy_class_of(self, a: int) -> pd.DataFrame:
-        cl = {a}
+        cl = pd.DataFrame(data=[a])
         for b in self.element_set:
             for g in self.element_set:
-                if self.multiply(a, g) == self.multiply(g, b):
-                    cl.add(b)
+                if self.multiply(a, g) == self.multiply(g, b) and a != b:
+                    cl = cl.append(pd.DataFrame([b]), ignore_index=True)
                     break
-        cl = pd.DataFrame({min(cl): cl})
-        if self.display_labels:
-            cl.replace(self.element_labels.to_dict(), inplace=True)
+        m = min(cl.values.flat)
+        header = 'CL({})'.format(self.label_of(m) if self.display_labels else m)
+        cl.columns = [header]
+        cl.drop_duplicates(inplace=True, keep='first')
+        cl.dropna(inplace=True)
+        cl = cl.reindex(index=list(range(len(cl))))
         return cl
 
     @property
@@ -396,26 +454,25 @@ class Group(object):
 
         :return:
         """
-        cl = list()
-        done = set()
-        for z in self.center.iloc[0, :].values.flat:
-            done |= z
-
+        all_cl = self.center
+        all_cl.columns = ['Center']
+        done = set(map(self.element_of, self.center.values.flat))
         for el in self.element_set:
+            print('Doing {}'.format(el))
+            print(all_cl)
+            print(done)
             if el in done:
+                print('{} is exiting'.format(el))
                 continue
-            cl_el = self.conjugacy_class_of(el).values
-            cl.append(cl_el)
-            done |= cl_el
-        cl_temp = self.center.to_dict()
-        for col in cl:
-            cl_temp[min(col)] = col
-        cl = pd.DataFrame(cl_temp)
-        if self.display_labels:
-            cl.replace(self.element_labels.to_dict(), inplace=True)
-        return cl
+            print('Doing {}'.format(el))
+            cl = self.conjugacy_class_of(el)
+            print(cl)
+            done |= set(map(self.element_of, cl.values.flat))
+            all_cl = pd.concat([all_cl, cl], axis=1)
+        return all_cl
 
     # @log_decorator(logger)
+    @property
     def orbits(self) -> pd.DataFrame:
         """
         Lists all Element orbits where The Element 'x' orbit is:-
@@ -423,15 +480,18 @@ class Group(object):
         Where x^n=0 (Identity)
         :return: list of all the element orbits
         """
-        all_orbits = dict()
+
+        all_orbits = pd.DataFrame()
         for element in self.element_set:
-            all_orbits[element] = self.orbit(element).values.tolist()
+            all_orbits = pd.concat([all_orbits, self.orbit(element)], axis=1)
         all_orbits = pd.DataFrame(all_orbits)
+
         if self.display_labels:
             all_orbits.replace(self.element_labels.to_dict(), inplace=True)
+            all_orbits.fillna(value='', inplace=True)
         return all_orbits
 
-    def orbit(self, element: int) -> pd.DataFrame:
+    def orbit(self, element: int) -> pd.Series:
         """
         The Element 'x' orbit is:-
         [x, x^2, x^3, ...,x^n]
@@ -444,9 +504,12 @@ class Group(object):
         while ele != Group.Identity:
             ele = self.multiply(ele, element)
             orbit.append(ele)
-        orbit = pd.DataFrame({element: orbit})
+        header = '<{}>'.format(self.label_of(element)
+                               if self.display_labels
+                               else '<{}>'.format(element))
+        orbit = pd.Series(orbit).rename(header)
         if self.display_labels:
-            orbit.replace(self.element_labels.to_dict, inplace=True)
+            orbit.replace(self.element_labels.to_dict(), inplace=True)
         return orbit
 
     def element_order(self, element: int) -> int:
@@ -482,6 +545,15 @@ class Group(object):
         self._display_labels = value
         return
 
+    @label_handling_decorator(2)
+    def test(self, a: int, b: int) -> pd.DataFrame:
+        print('({}, {})'.format(a, b))
+        return pd.DataFrame({'a': [a], 'b': [b], 'a*b': [self.multiply(a, b)]})
+
+    def test2(self, a: int, b: int) -> pd.DataFrame:
+        print('({}, {})'.format(a, b))
+        return pd.DataFrame({'a': [a], 'b': [b], 'a*b': [self.multiply(a, b)]})
+
     @property
     def element_labels(self):
         return self._element_labels
@@ -497,11 +569,26 @@ class Group(object):
             raise ValueError('Lables must be Unique')
         self._element_labels = labels
 
-    def label_of(self, element: int) -> str:
-        try:
-            return self.element_labels[element]
-        except IndexError:
-            raise IndexError('The {}th Element is not in the element set.'.format(element))
+    def label_of(self, element):
+        if isinstance(element, str):
+            try:
+                return self.element_labels.index[self.element_labels == element][0]
+            except IndexError:
+                raise IndexError('There is no element with label "{}'.format(element))
+        else:
+            try:
+                return self.element_labels[element]
+            except IndexError:
+                raise IndexError('The {}th Element is not in the element set.'.format(element))
+
+    def element_of(self, element):
+        if isinstance(element, str):
+            return self.label_of(element)
+        else:
+            if element in self.element_set:
+                return element
+            else:
+                raise ValueError('element {} is not in group element set'.format(element))
 
     # Group to Group method
     @log_decorator(logger)
@@ -512,12 +599,42 @@ class Group(object):
             return []  # The bigger order of G & H must devides the other
         # check all possible mapping
         mapping_list = list()
-        for mapping in Mapping.mapping_generator(self.order, group_h.Order):
-            logger.debug('Checking homomorphism condition with the following mapping:-\n{}'
-                         .format(mapping))
-            if self.is_homomorphic(group_h, mapping):
-                mapping_list.append(mapping)
-        return mapping_list
+        for gens in self.generators:
+            for mapping in Mapping.mapping_generator(len(gens), group_h.Order):
+                logger.debug('mapping generators to element in H_group.')
+                logger.debug(['\nphi[{}] = {}'.format(_, mapping[_]) for _ in gens])
+                for gen in gens:  # iterate though all generator list
+                    for g in gen:  # iterate though the generators
+                        h = mapping[g]
+                        g_orbit = self.orbit(g)
+                        h_orbit = group_h.orbit(h)
+                        gl, hl = len(g_orbit), len(h_orbit)
+                        if max(gl, hl) % min(gl, hl) != 0:
+                            # orbit lengths of g in Group G and h in group H
+                            # are not divisible to each other
+                            # find other mapping
+                            break
+                        # repeat the smaller orbit to match the bigger obit length
+                        if gl > hl:
+                            h_orbit = [_ for _ in itertools.repeat(h_orbit, gl // hl)]
+                            h_orbit = [_ for _ in itertools.chain(*h_orbit)]
+                        else:
+                            g_orbit = [_ for _ in itertools.repeat(g_orbit, hl // gl)]
+                            g_orbit = [_ for _ in itertools.chain(*g_orbit)]
+                        # add mapping links
+                        for g1, h1 in zip(g_orbit, h_orbit):
+                            mapping.add_link(g1, h1)
+                    else:
+                        # No break hence add the mapping to te list
+                        logger.debug('Checking homomorphism condition with the following mapping:-\n{}'
+                                     .format(mapping))
+                        if self.is_homomorphic(group_h, mapping):
+                            mapping_list.append(mapping)
+                        mapping_list.append(mapping)
+                        continue
+                    # break has occurred hence skip this mapping scheme
+                    continue
+            return mapping_list
 
     @log_decorator(logger)
     def is_homomorphic(self, group_h: Group_Type, mapping: Mapping_Type = None):
@@ -558,6 +675,7 @@ class Group(object):
         else:
             return self.find_homomorphic_mapping(group_h)
 
+
     @property
     @log_decorator(logger)
     def subgroups(self):
@@ -587,8 +705,7 @@ class Group(object):
                     sg = Group.from_definition(
                         lambda x, y: str(self.multiply(x, y)),
                         subgroup_elements)
-                    subgroup_list.append(
-                        {'subgroup': sg, 'subset': subgroup_elements})
+                    subgroup_list.append(sg)
                     logger.debug(
                         '{} of size {} makes a VAILD subgroup'.format(subgroup_elements, len(subgroup_elements)))
                 except Exception as excep:
@@ -600,6 +717,7 @@ class Group(object):
 
     @property
     # @log_decorator(logger)
+    @label_handling_decorator(0)
     def generators(self) -> pd.DataFrame:
         def generated_elements(element_set1: iter, element_set2: iter):
             element_generated = set()
@@ -611,28 +729,32 @@ class Group(object):
 
         def is_new_generator(possible_gen, existing_gen):
             for g in existing_gen:
-                common = set(g).intersection(set(possible_gen))
-                if list(common) in existing_gen:
+                logger.debug('{} is subset of {}?'.format(possible_gen, g))
+                if set(possible_gen) > set(g):
+                    logger.debug('True')
                     return False
+                logger.debug('False')
             else:
                 logger.debug('{} is new possible generator'.format(possible_gen))
                 return True
 
         generators_list = list()
-        for orbits in all_subsets(self.orbits[1:]):
-            gens = [orbit[0] for orbit in orbits]
-            if not is_new_generator(gens, generators_list):
+        for gens in all_subsets(self.element_set):
+            if len(gens) < 1:
+                continue
+            elif self.order % len(gens) != 0:
+                continue
+            elif not is_new_generator(gens, generators_list):
                 logger.debug('{} already have existing generators'.format(gens))
                 continue
+            orbits = [self.orbit(orb).tolist() for orb in gens]
             elements = functools.reduce(generated_elements, orbits, [0])
             logger.debug('The elements {} have generated {}'.format(gens, elements))
             logger.debug('{} == {}\t[{}]'.format(elements, self.element_set, elements == list(self.element_set)))
             if elements == list(self.element_set):
                 logger.debug('{} Added'.format(gens))
                 generators_list.append(gens)
-        generators_list = pd.DataFrame(generators_list)
-        if self.display_labels:
-            generators_list.replace(self.element_labels.to_dict, inplace=True)
+        generators_list = pd.DataFrame([_ for _ in itertools.zip_longest(generators_list)])
         return generators_list
 
     @property
@@ -676,9 +798,9 @@ class Group(object):
             html_file.write(self.to_html)
             print('HTML File have been written in ' + filename + '.\n')
 
-    def plot(self):
+    def plot(self, annot=True):
         return sns.heatmap(self.cayley_table,
-                           annot=True,
+                           annot=annot,
                            fmt="g",
                            cmap='viridis',
                            cbar_kws={"ticks": self.element_set})

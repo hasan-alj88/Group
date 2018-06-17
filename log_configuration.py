@@ -23,7 +23,7 @@ def create_logger():
     stream_handler.setFormatter(log_format)
     file_handler.setFormatter(log_format)
     # add handles to logger
-    log.addHandler(stream_handler)
+    # log.addHandler(stream_handler)
     log.addHandler(file_handler)
     return log
 

@@ -1,3 +1,6 @@
+import networkx as nx
+from matplotlib import pyplot as plt
+
 from Permutation import *
 
 Mapping_Type = TypeVar('Mapping_Type', bound='Mapping')
@@ -10,6 +13,7 @@ class Mapping(object):
 
     def __init__(self, phi: pd.DataFrame = pd.DataFrame(columns=['domain', 'co_domain']), strict_mapping: bool = True):
         self.links = phi
+        self.nodes = pd.DataFrame(columns=['node', 'position', 'label', 'color'])
 
     def __str__(self):
         s = 'Mapping properties:-\n'
@@ -40,8 +44,20 @@ class Mapping(object):
 
     def add_link(self, g: int, h: int):
         new_link = pd.DataFrame(data=[[g, h]], columns=['domain', 'co_domain'])
-        self.links = self.links.append(new_link, ignore_index=True)
+        self.links = self.links.append(new_link, ignore_index=True, sort=True)
         self.links = self.links.drop_duplicates()
+        if 'A{}'.format(g) not in self.nodes.loc[:, 'node'].tolist():
+            node = pd.DataFrame({'node': ['A{}'.format(g)],
+                                 'position': ['{},0'.format(g)],
+                                 'label': [g],
+                                 'color': ['b']})
+            self.nodes = pd.concat([self.nodes, node], ignore_index=True, sort=False)
+        if 'B{}'.format(h) not in self.nodes.loc[:, 'node'].tolist():
+            node = pd.DataFrame({'node': ['B{}'.format(h)],
+                                 'position': ['{},1'.format(h)],
+                                 'label': [h],
+                                 'color': ['r']})
+            self.nodes = pd.concat([self.nodes, node], ignore_index=True, sort=False)
 
     @property
     def size(self):
@@ -133,3 +149,21 @@ class Mapping(object):
 
     def kernel(self):
         return self.links[self.links['co_domain'] == 0]
+
+    def plot(self):
+        fig = nx.DiGraph()
+        nodes = self.nodes.loc[:, 'node'].tolist()
+        print(nodes)
+        pos = list(map(lambda x: tuple(list(map(int, x.split(',')))),
+                       self.nodes.loc[:, 'position'].tolist()))
+        pos = dict(itertools.zip_longest(nodes, pos))
+        nx.draw_networkx_nodes(fig, pos, nodes,
+                               node_color=self.nodes.loc[:, 'color'].tolist())
+        for ind in self.links.index:
+            u = 'A{}'.format(self.links.iat[ind, 0])
+            v = 'B{}'.format(self.links.iat[ind, 1])
+            fig.add_edge(u, v)
+        print(fig.edges)
+        plt.axis('off')
+        nx.draw(fig)
+        return
