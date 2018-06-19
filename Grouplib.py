@@ -675,7 +675,6 @@ class Group(object):
         else:
             return self.find_homomorphic_mapping(group_h)
 
-
     @property
     @log_decorator(logger)
     def subgroups(self):
@@ -718,43 +717,46 @@ class Group(object):
     @property
     # @log_decorator(logger)
     @label_handling_decorator(0)
-    def generators(self) -> pd.DataFrame:
-        def generated_elements(element_set1: iter, element_set2: iter):
-            element_generated = set()
-            for x, y in itertools.product(element_set1, element_set2):
-                element_generated.add(self.multiply(x, y))
-            element_generated = list(element_generated)
-            element_generated.sort()
-            return element_generated
+    def generators(self) -> list:
+        print('Start')
+        display_label_state = self.display_labels
+        self.display_labels = False
 
-        def is_new_generator(possible_gen, existing_gen):
-            for g in existing_gen:
-                logger.debug('{} is subset of {}?'.format(possible_gen, g))
-                if set(possible_gen) > set(g):
-                    logger.debug('True')
-                    return False
-                logger.debug('False')
-            else:
-                logger.debug('{} is new possible generator'.format(possible_gen))
-                return True
-
-        generators_list = list()
-        for gens in all_subsets(self.element_set):
+        def generated_elements(gens: list):
             if len(gens) < 1:
-                continue
-            elif self.order % len(gens) != 0:
-                continue
-            elif not is_new_generator(gens, generators_list):
-                logger.debug('{} already have existing generators'.format(gens))
-                continue
-            orbits = [self.orbit(orb).tolist() for orb in gens]
-            elements = functools.reduce(generated_elements, orbits, [0])
-            logger.debug('The elements {} have generated {}'.format(gens, elements))
-            logger.debug('{} == {}\t[{}]'.format(elements, self.element_set, elements == list(self.element_set)))
-            if elements == list(self.element_set):
-                logger.debug('{} Added'.format(gens))
-                generators_list.append(gens)
-        generators_list = pd.DataFrame([_ for _ in itertools.zip_longest(generators_list)])
+                return []
+            elif len(gens) == 1:
+                return self.orbit(gens[0]).drop_duplicates().values.tolist()
+            elif len(gens) == 2:
+                [x, y] = gens
+                generated_ele = set()
+                for xi, yi in itertools.product(self.orbit(x).values.tolist(),
+                                                self.orbit(y).values.tolist()):
+                    generated_ele.add(self.multiply(xi, yi))
+                generated_ele = list(generated_ele)
+                generated_ele.sort()
+                return generated_ele
+            else:
+                return functools.reduce(lambda a, b: set(generated_elements([a, b])), gens, {0})
+
+        generators_list = []
+        print('{} divisors are {}'.format(self.order, [_ for _ in find_divisors(self.order)]))
+        for n in find_divisors(self.order):
+            print('n = {}'.format(n))
+            for g in itertools.combinations(self.element_set, r=n):
+                print('g = {}'.format(g))
+                print('generated elements are \n{}'.format(generated_elements(g)))
+                for g_existing in generators_list:
+                    if set(g).issubset(set(g_existing)):
+                        print('generators already existing')
+                        break
+                else:
+                    if generated_elements(g) == self.element_set:
+                        print('Added')
+                        generators_list.append(g)
+                        continue
+                    print('discarded')
+        self.display_labels = display_label_state
         return generators_list
 
     @property
