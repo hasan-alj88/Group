@@ -1,171 +1,120 @@
-import sqlite3
-from contextlib import contextmanager
-
-import seaborn as sns
-
-from PrimeLib import *
-from log_configuration import log_decorator
-from mapping import *
+import pandas as pd
+import numpy as np
+import itertools as itr
+import functools
+from Permutation import Permutation
+from log_configuration import logger
+import PrimeLib
+from typing import TypeVar, List, Tuple
+from Permutation import Permutation_Type
 
 Group_Type = TypeVar('Group_Type', bound='Group')
 
 
-@contextmanager
-@log_decorator(logger)
-def group_db():
-    path = 'group_db.db'
-    with sqlite3.connect(path) as con:
-        yield con
+class Group:
+    """
 
+    """
 
-def label_handling_decorator(number_of_element_input: int):
-    def label_handling(func):
-        def label_handling_wrapper(*args, **kwargs):
-            """
-            Group methods use integers to represent elements
-            This decorator function is used to handel element labels as input
-            :param args:
-            :param kwargs:
-            :return:
-            """
+    def __init__(self, cayley_table: pd.DataFrame, name: str = 'UnnamedGroup'):
 
-            def element_input(element_in):
-                if isinstance(element_in, str):
-                    return args[0].label_of(element_in)
-                else:
-                    return element_in
-
-            args = list(args)
-            for el in range(1, number_of_element_input + 1):
-                try:
-                    args[el] = element_input(args[el])
-                except IndexError:
-                    raise ValueError('There is no {}th parameter'.format(el))
-            args = tuple(args)
-
-            ret = func(*args, **kwargs)
-
-            if args[0].display_labels:
-                if isinstance(ret, pd.DataFrame):
-                    ret.replace(args[0].element_labels.to_dict(), inplace=True)
-                    ret.fillna(value='', inplace=True)
-                else:
-                    ret = args[0].label_of(ret)
-            return ret
-
-        return label_handling_wrapper
-
-    return label_handling
-
-
-# @log_decorator(logger)
-class Group(object):
-    def __init__(self,
-                 cayley_table: pd.DataFrame,
-                 name: str = 'UnnamedGroup',
-                 display_labels: bool = True):
         self._order = None
-        self.cayley_table = cayley_table
-        self._element_labels = None
-        self.name = name
-        self._reference = None
-        self._is_abeailan = None
+        self._is_abelian = None
         self._is_simple = None
         self._is_solvable = None
+        self._orbits = None
+        self._center = None
+        self._generators = None
         self._subgroups = None
-        self._display_labels = display_labels
-        self.normalize_table()
+        self._automorphism = None
+        self._multiplication_table = None
+        self.name = name
+        # logger.debug('Creating Group with the following Table:\n{}'.format(cayley_table))
+        self.cayley_table = cayley_table
+        self.labels = pd.Series(self.cayley_table.iloc[0].values)
+        # logger.debug('Group elements labels are :-\n{}'.format(self.labels))
+        self.cayley_table = self.cayley_table.replace(to_replace=self.labels.values,
+                                                      value=np.arange(len(self.labels)))
+        self.cayley_table.astype(np.int)
+        self.cayley_table.sort_values(0, inplace=True)
+        # logger.debug('Using numeric elements only :-\n{}'.format(self.cayley_table))
+        self.cayley_table.set_index(self.cayley_table.iloc[0].values, inplace=True)
+        # Validate Table
+        try:
+            # Test for Closure
+            q = self.cayley_table[self.cayley_table.applymap(lambda x: isinstance(x, str))]
+            q = pd.Series(q.values.flatten()).dropna().tolist()
+            if len(q) > 0:
+                error_message = 'Closure Axiom Violation. The following element are not in the set {}'.format(q)
+                raise GroupAxiomsViolationClosure(error_message)
+            # Must be square
+            table_shape = self.cayley_table.shape
+            if len(table_shape) != 2 and table_shape[0] != table_shape[1]:
+                error_message = 'Group Table must be a square where entered cayley_table deminsions is {}'.format(
+                    table_shape)
+                raise NotValidGroupTable(error_message)
+            self._order = self.cayley_table.shape[0]
 
-    def __str__(self):
-        s = 'Group Name:\t{}\n'.format(self.name)
-        s += 'Group order:\t{}\n'.format(self.order)
-        s += 'Abeailan group:\t{}\n'.format(self.is_abeailan)
-        s += 'solvable : {}\n'.format(self.is_solvable)
-        s += 'Element Lables:-\n'
-        for el, label in self.element_labels.to_dict().items():
-            s += '{}\t->\t{}\n'.format(el, label)
-        return s
+            # No duplicates
+            for rowcol in self.element_set:
+                if any(self.cayley_table.iloc[rowcol].duplicated()):
+                    error_message = 'No duplicates allowed in Table. Duplicate detected in row #{}'.format(rowcol)
+                    raise NotValidGroupTable(error_message)
+                if any(self.cayley_table.iloc[:, rowcol].duplicated()):
+                    error_message = 'No duplicates allowed in Table. Duplicate detected in column #{}'.format(rowcol)
+                    raise NotValidGroupTable(error_message)
+            for a, b, c in itr.combinations(self.element_set, 3):
+                if self.multiply(a, self.multiply(b, c)) != self.multiply(self.multiply(a, b), c):
+                    error_message = 'Associativity Axiom Violation.'
+                    error_message += 'where it does not apply on the following elements {}'.format([a, b, c])
+                    raise GroupAxiomsViolationAssociativity(error_message)
+        except Exception as e:
+            print(e)
+            self.cayley_table = pd.DataFrame([0])
 
-    def __mul__(self, other):
-        return Group.direct_product(self, other)
-
-    def __len__(self):
-        return self.order - 1
-
-    # Validation methods
-    def normalize_table(self):
+    def __mul__(self, other: Group_Type) -> Group_Type:
         """
-        The standard form is the first row and column are in sorted order
-        This method set the table to standard form.
+        Direct product between this group and the 'other' group
+        :param other: The other group
+        :return Group_Type: Direct product between this group and the 'other' group
         """
-        logger.debug('Group order is {}'.format(self.order))
-        logger.debug('Table in non standard form:-\n{}'.format(self.cayley_table))
-        p = Permutation.of_input_array(list(self.cayley_table.iloc[:, 0]),
-                                       list(self.cayley_table.iloc[0, :]))
-        self.cayley_table.index = p.permutated_array_of_length(len(self))
-        self.cayley_table = self.cayley_table.reindex(index=sorted(self.cayley_table.index))
-        logger.debug('Table after reindexing:-\n{}'.format(self.cayley_table))
-        # Set Element lables
-        self.element_labels = pd.Series(self.cayley_table.iloc[0, :])
-        logger.debug('Element labels:-\n{}'.format(self.element_labels))
-        self.cayley_table = self.cayley_table.replace(value=list(self.element_labels.index),
-                                                      to_replace=list(self.element_labels))
-        logger.debug('Table raw data:-\n{}'.format(self.cayley_table))
-        self.validate_table()
-        return
+        return Group.semi_direct_product(self, other)
 
-    def validate_table(self):
+    def __str__(self) -> str:
+        out = '____________________'
+        out += '\nGroup Name\t:{}\n'.format(self.name)
+        out += 'Order\t:{}\n '.format(self.order)
+        out += 'Abelian\t:[{}]\n'.format(self.is_abelian)
+        out += 'Caley Table:-\n{}\n'.format(self.cayley_table)
+        out += 'Elements :-\n{}\n'.format(self.labels)
+        out += '____________________'
+        return out
 
-        # No Duplicate in all rows and columns
-        for row_ind, row in self.cayley_table.iterrows():
-            row_duplicates = row.duplicated()
-            if row_duplicates.any():
-                raise ValueError('The Group Multiplication table grid must be a latin Square.\n' +
-                                 'The following elements are duplicated {}'.format(row[row_duplicates]))
-        for col_ind, col in self.cayley_table.iteritems():
-            col_duplicates = col.duplicated()
-            if col_duplicates.any():
-                raise ValueError('The Group Multiplication table grid must be a latin Square.\n' +
-                                 'The following elements are duplicated {}'.format(col[col_duplicates]))
-
-        # All the table entries must be in group element list (closure Group property)
-        group_set = set(self.element_set)
-        for row_ind, row in self.cayley_table.iteritems():
-            elements_not_in_group = set(row.values).difference(group_set)
-            if len(elements_not_in_group) > 0:
-                raise ValueError(
-                    'The element(s) found in {}th row {} are not in the group set'
-                        .format(row_ind, elements_not_in_group))
-        for col_ind, col in self.cayley_table.iteritems():
-            elements_not_in_group = set(col.values).difference(group_set)
-            if len(elements_not_in_group) > 0:
-                raise ValueError(
-                    'The element(s) found in {}th column {} are not in the group set'
-                        .format(col_ind, elements_not_in_group))
-        # A Group must be associative (a*b)*c == a*(b*c)
-        if not self.is_associative:
-            raise ValueError('A Group must be associative (a*b)*c == a*(b*c)')
-        return
-
-    # class methods
+    # Class methods  (constructors)
     @classmethod
-    @log_decorator(logger)
-    def from_file(cls, filename: str, delimiter: str = '\t', name: str = 'Unnamed group'):
+    def from_file(cls,
+                  filename: str,
+                  delimiter: str = '\t',
+                  name: str = 'UnnamedGroup') -> Group_Type:
         """
-        Reads cayley_table table (Multiplication table) from a file.
+        Reads cayley_table cayley_table (Multiplication cayley_table) from a file.
         [!] The Elements are separated by the delimiter (default : Tab) and row every new line.
-        [!] The table must obey the Group Axiom. ie the table must be a latin grid.
+        [!] The cayley_table must obey the Group Axiom. ie the cayley_table must be a latin grid.
         :param name :(optional) group name
         :param filename: The file path and name
         :param delimiter: string that separate the group elements in a row, default Tab.
         :return: Group Object
         """
-        return cls(cayley_table=pd.read_csv(filename, sep=delimiter, header=None),
+        return cls(cayley_table=pd.read_csv(filename,
+                                            sep=delimiter,
+                                            header=None),
                    name=name)
 
     @classmethod
-    def from_definition(cls, operation: callable, element_set: iter, parse: callable = str,
-                        name: str = 'Unnamed group'):
+    def from_definition(cls, operation: callable,
+                        element_set: iter,
+                        parse: callable = str,
+                        name: str = 'Unnamed group') -> Group_Type:
         """
         Create a Group object from list of python objects and a binary operation.
         :param operation: The binary operation of the group.
@@ -180,106 +129,42 @@ class Group(object):
          lambda x: '{:+}{:+}j'.format(0.0+x.real, 0.0+x.imag)
         :return:
         """
-        # logger.info(('Creating a group of below elements under the operation {.__name__}'
-        #              + ' with the following definition:-\n{}\nElements are {}')
-        #             .format(operation, getsource(operation), element_set))
         order = len(element_set)
+        # logger.debug('Creating Table of size {}'.format(order))
         mul_table = pd.DataFrame(index=range(order), columns=range(order))
-        logger.debug('Constructing the multiplication table:-')
-        for (xi, x), (yi, y) in itertools.product(enumerate(element_set), repeat=2):
-            z = parse(operation(x, y))
-            # logger.debug('Multiplication table[{}][{}] = {}'.format(xi, yi, z))
-            mul_table[xi][yi] = z
-        logger.info('The result multiplication table:\n{}'.format(mul_table))
+        for (xi, x), (yi, y) in itr.product(enumerate(element_set), repeat=2):
+            # logger.debug('({},{})={}*{}'.format(xi, yi, x, y))
+            mul_table.iloc[xi, yi] = parse(operation(x, y))
+            # logger.debug('\t={}'.format(parse(operation(x, y))))
+        # logger.debug('Table created by defined function is:-\t{}'.format(mul_table))
         return cls(cayley_table=mul_table, name=name)
 
     @classmethod
-    def semidirect_product(cls,
-                           group_g: Group_Type,
-                           group_h: Group_Type,
-                           phi: Mapping_Type) -> Group_Type:
-        gl, hl = group_g.order, group_h.order
-        if (gl, hl) != phi.size:
-            raise ValueError(
-                """Mapping mismatch.
-                Mapping size is {}
-                groups sizes are {}, {}""".format(phi.size, gl, hl))
-
-        logger.debug('G Element set = {}'.format(list(group_g.element_set)))
-        logger.debug('H Element set = {}'.format(list(group_h.element_set)))
-        logger.debug('phi = {}'.format(phi))
-        logger.debug('|G x. H| = |G|x.|H| = {} x. {} = {}'.format(gl, hl, gl * hl))
-
-        def semidirect_multiply(x: int, y: int) -> int:
-            x1, x2 = x // gl, x % gl
-            y1, y2 = y // hl, y % hl
-            z1 = group_g.multiply(x2, y1)
-            z2 = group_h.multiply(x1, y2)
-            z3 = phi[z2]
-            n = hl * z1 + z3
-            logger.info(
-                '({}*{} , Phi[{}*{}]) = ({}, Phi[{}]) = ({}, {})'.format(
-                    x2, y1, x1, y2, z1, z2, z1, z3))
-            return n
-
-        element_labels = list()
-        for g, h in itertools.product(group_g.element_set, group_h.element_set):
-            element_labels.append('({},{})'.format(g, h))
-
-        def parse_label(el: int) -> str:
-            try:
-                return element_labels[el]
-            except IndexError:
-                raise IndexError('{} element label is not in {}'.format(el, element_labels))
-
-        return Group.from_definition(semidirect_multiply, list(range(gl * hl)), parse_label)
-
-    @classmethod
-    def direct_product(cls,
-                       group_g: Group_Type,
-                       group_h: Group_Type) -> Group_Type:
-        gl, hl = group_g.order, group_h.order
-        if gl < hl:
-            return Group.direct_product(group_h, group_g)
-        mapping = Mapping.by_function([i for i in range(gl)],
-                                      lambda x: x % hl)
-        return Group.semidirect_product(group_g, group_h, mapping)
-
-    @classmethod
-    def from_db(cls, group_ref: str) -> Group_Type:
-        # will be implemented
-        pass
-
-    @classmethod
-    def cyclic(cls, order: int, name: str = 'Unnamed group') -> Group_Type:
+    def cyclic(cls, order: int) -> Group_Type:
         """
         Creates a Cyclic Group of order n (G,+) aka Z mod n
         Modular addition of set of size n in mod n group
         :param order: Group order (element set size)
-        :param name: group name
         :return: Cyclic Group
         """
+        name = 'Z_{}'.format(order)
         return Group.from_definition(lambda x, y: (x + y) % order, list(range(order)), name=name)
 
     @classmethod
-    def symmetric(cls, n: int, name: str = None) -> Group_Type:
+    def symmetric(cls, n: int) -> Group_Type:
         """
         Creates the symmetric group of the all permutations of n elements
         :param n:
-        :param name: group name
         :return:
         """
-        if name is None:
-            name = 'S{}'.format(n)
         element_list = [p for p in Permutation.generator(n)]
-        return Group.from_definition(operation=lambda x, y: x + y,
+        return Group.from_definition(operation=Permutation.__add__,
                                      element_set=element_list,
-                                     name=name)
+                                     name='S_{}'.format(n))
 
     @classmethod
-    def dihedral(cls, n: int):
+    def dihedral(cls, n: int) -> Group_Type:
         """
-
         :param n:
         :return:
         """
@@ -303,69 +188,100 @@ class Group(object):
                 expression = 'e' if expression == '' else expression
             return expression
 
-        D = Group.from_definition(lambda x, y: reduce_expression(x + y),
-                                  element_set=element_list,
-                                  parse=lambda x: x)
+        element_labels = pd.Series(element_list)
         for ind, el in enumerate(element_list):
             r_count = el.count('r')
             f_count = el.count('f')
             if r_count > 1:
-                element_list[ind] = 'r^{}'.format(r_count) if f_count == 0 else 'fr^{}'.format(r_count)
-        D.element_labels = pd.Series(element_list)
-        return D
+                element_labels[ind] = 'r^{}'.format(r_count) if f_count == 0 else 'fr^{}'.format(r_count)
+        return Group.from_definition(
+            lambda x, y: reduce_expression(x + y),
+            element_set=element_list,
+            parse=lambda x: element_labels[x], name='D_(2*{})'.format(n))
 
-    # properties
-    @property
-    def multiplication_table(self) -> pd.DataFrame:
+    @classmethod
+    def semi_direct_product(cls,
+                            group_g: Group_Type,
+                            group_h: Group_Type,
+                            phi: Permutation_Type = Permutation()) -> Group_Type:
         """
-        Outputs the multiplication table with the element tables
-        :return: pandas.DataFrame: multiplication table
+
+        :param group_g:
+        :param group_h:
+        :param phi:
+        :return:
         """
-        if self.display_labels:
-            return self.cayley_table.replace(self.element_labels.to_dict())
-        else:
-            return self.cayley_table
+        gl, hl = group_g.order, group_h.order
+        if len(phi) > gl:
+            raise ValueError('Invalid phi permutation on group G')
+        logger.debug('G Element set = {}'.format(list(group_g.element_set)))
+        logger.debug('H Element set = {}'.format(list(group_h.element_set)))
+        logger.debug('phi = {}'.format(phi))
+        logger.debug('|G x. H| = |G|x.|H| = {} x. {} = {}'.format(gl, hl, gl * hl))
 
-    # Element Iterators
-    @property
-    def element_set(self):
-        return [i for i in range(self.order)]
+        def product_element(gx: int, hx: int) -> int:
+            return gx + hx * gl
 
-    # @log_decorator(logger)
-    @label_handling_decorator(2)
+        def product_element_pair(prod_element: int):
+            return prod_element % gl, prod_element // gl
+
+        def semi_direct_multiply(el_x: int, el_y: int) -> int:
+            x1, x2 = product_element_pair(el_x)
+            y1, y2 = product_element_pair(el_y)
+            logger.debug('{}*{}=({},{})*({},{})'.format(el_x, el_y, x1, y1, x2, y2))
+            logger.debug('\t=({}*phi[{}], {}*{})'.format(x1, y1, x2, y2))
+            logger.debug('\t=({}*{}, {}*{})'.format(x1, phi[y1], x2, y2))
+            z1 = group_g.multiply(x1, phi[y1])
+            z2 = group_h.multiply(x2, y2)
+            n = product_element(z1, z2)
+            logger.debug('\t=({},{})={}'.format(z1, z2, n))
+            return n
+
+        prod_lables = []
+        for prod_n in range(gl * hl):
+            logger.debug('Getting label of {}'.format(prod_n))
+            x, y = product_element_pair(prod_n)
+            logger.debug('{}=>({},{})'.format(prod_n, x, y))
+            x_label = group_g.labels[x]
+            logger.debug('x = {} => {}'.format(x, x_label))
+            y_label = group_h.labels[y]
+            logger.debug('y = {} => {}'.format(y, y_label))
+            logger.debug('Label of {} => ({},{})\n'.format(prod_n, x_label, y_label))
+            prod_lables.append('({},{})'.format(x_label, y_label))
+
+        def prod_element_label(n: int) -> str:
+            return prod_lables[n]
+
+        return Group.from_definition(semi_direct_multiply,
+                                     list(range(gl * hl)),
+                                     prod_element_label)
+
     def multiply(self, x: int, y: int) -> int:
-        return self.cayley_table.iat[x, y]
+        try:
+            return self.cayley_table.iloc[x, y]
+        except IndexError:
+            error_message = 'single positional indexer is out-of-bounds.'
+            error_message += '\nGroup order is {} where (x,y) = ({}, {})'.format(self.order, x, y)
+            raise IndexError(error_message)
 
-    def multiply_left_to_right(self, elements: iter) -> int:
-        return functools.reduce(function=self.multiply,
-                                sequence=elements,
-                                initial=0)
+    def label_of(self, element: int) -> str:
+        try:
+            return self.labels.iloc[element]
+        except IndexError:
+            return '#INVALID!'
 
-    # Group Properties
     @property
-    def order(self):
+    def order(self) -> int:
         if self._order is None:
-            # Table dimensions
-            d1, d2 = self.cayley_table.shape
-            if d1 != d2:
-                raise ValueError('The Group Multiplication table grid must be a latin Square.\n' +
-                                 'The Input table dimension was ({}, {})'.format(d1, d2))
-            self._order = d1
+            self._order = self.cayley_table.shape[0]
         return self._order
 
     @property
-    def is_simple(self) -> bool:
-        return len(self.subgroups) < 2
+    def element_set(self) -> List[int]:
+        return [el for el in range(self.order)]
 
     @property
-    def is_solvable(self):
-        if self._is_solvable is not None:
-            return 'feature will available in a later version'
-        return 'feature will available in a later version'
-
-    @property
-    # @log_decorator(logger)
-    def is_abeailan(self) -> bool:
+    def is_abelian(self) -> bool:
         """
         A Group is abeailan if following condition is met:-
         let x,y are Group elements of (G,*)
@@ -373,90 +289,244 @@ class Group(object):
         x * y = y * x must be True for all group elements
         :return: bool : is abeailan (True/False)
         """
-        # to avoid double calculation
-        if self._is_abeailan is not None:
-            return self._is_abeailan
-
-        self._is_abeailan = True
-        for x, y in itertools.combinations(self.element_set, r=2):
-            if x is y:
-                continue
-            if self.multiply(x, y) != self.multiply(y, x):
-                logger.info('{} * {} != {} * {} \tThus the Group is non-abeailan'.format(x, y, y, x))
-                self._is_abeailan = False
-                break
-        return self._is_abeailan
-
-    @property
-    def is_associative(self):
-        for x, y, z in itertools.product(self.element_set, repeat=3):
-            if self.multiply(self.multiply(x, y), z) != self.multiply(x, self.multiply(y, z)):
-                logger.debug('For ({},{},{})'.format(x, y, z))
-                logger.debug(
-                    '{} != {}'.format(self.multiply(self.multiply(x, y), z), self.multiply(x, self.multiply(y, z))))
-                return False
-        return True
-
-    # Element methods
-    Identity = 0  # Standard for all Groups
-
-    def inverse(self, element):
-        # logger.debug('Getting the inverse of the element {}'.format(element))
-        if element not in self.element_set:
-            raise ValueError('{} is not a Group element.'.format(element))
-        for x in self.element_set:
-            if self.multiply(element, x) == Group.Identity:
-                return x
-        raise ValueError('All elements must have inverse (Group Axiom)')
-
-    @label_handling_decorator(2)
-    def conjugate(self, a: int, b: int) -> int:
-        """
-
-        :param a:
-        :param b:
-        :return: b * a * b^-1
-        """
-        return self.multiply_left_to_right([b, a, self.inverse(b)])
-
-    @property
-    @label_handling_decorator(0)
-    def center(self) -> pd.DataFrame:
-        center_list = set()
-        for a in self.element_set:
-            for b in self.element_set:
+        if self._is_abelian is None:
+            for a, b in itr.combinations(self.element_set, 2):
                 if self.multiply(a, b) != self.multiply(b, a):
+                    self._is_abelian = False
                     break
             else:
-                center_list.add(a)
-        center_list = pd.DataFrame(data=[_ for _ in center_list], columns=['Center'])
-        return center_list
+                self._is_abelian = True
+        return self._is_abelian
 
-    @label_handling_decorator(1)
-    def conjugacy_class_of(self, a: int) -> pd.DataFrame:
-        cl = pd.DataFrame(data=[a])
+    @property
+    def automorphism(self) -> Group_Type:
+        """
+        Group automorphism is the homomorphism of the Group to it self.
+        As in all the rewiring of the group that keep the result multiplication table consistent.
+        :return: automorphism Group
+        """
+        if self._automorphism is None:
+            automorphism_elements = list()
+            # logger.debug('Getting automorphism of group G')
+            for phi in Permutation.generator(self.order):
+                for a, b in itr.product(self.element_set, repeat=2):
+                    if self.multiply(phi[a], phi[b]) != phi[self.multiply(a, b)]:
+                        break
+                else:
+                    automorphism_elements.append(phi)
+                    logger.debug('Added {}'.format(phi))
+            logger.debug('AutomorphismGroup elements are \n{}'.format([str(i) for i in automorphism_elements]))
+            return Group.from_definition(Permutation.__add__, automorphism_elements)
+        else:
+            return self._automorphism
+
+    def subgroup_with_elements(self,
+                               subgroup_elements: List[int],
+                               name: str = None) -> Group_Type:
+        """
+        Creating a group from a group subset
+        :param subgroup_elements: subset of group elements
+        :param name: (optional) name of the subgroup
+        :return: A subgroup if the elements forms a valid group otherwise trivial group
+        """
+        try:
+            return Group.from_definition(self.multiply,
+                                         subgroup_elements,
+                                         name=name if name is not None else 'subgroup of {}'.format(self.name),
+                                         parse=lambda x: self.labels[x])
+        except ValueError:
+            raise
+
+    @property
+    def subgroups(self) -> List[Group_Type]:
+        """
+        List the proper subgroups of the Group G
+        :return: List the proper subgroups of the Group G
+        """
+        if self._subgroups is None:
+            self._subgroups = list()
+            for subgroup_order in PrimeLib.find_divisors(self.order):
+                if subgroup_order in [1, self.order]:
+                    # logger.debug('Skip Group of size {}'.format(subgroup_order))
+                    continue
+                for subgroup_elements in itr.combinations(self.element_set, r=subgroup_order):
+                    try:
+                        subgroup = self.subgroup_with_elements(subgroup_elements)
+                        if subgroup.order == 1:
+                            raise ValueError
+                        # logger.debug('Added a subgroup of size {}'.format(subgroup_order))
+                        self._subgroups.append(subgroup)
+                        logger.debug(subgroup)
+                        print(subgroup)
+                    except ValueError:
+                        # logger.debug('Skip')
+                        continue
+
+        return self._subgroups
+
+    def is_homomorphic(self, group_h: Group_Type) -> Tuple[bool, str]:
+        if group_h.order < self.order:
+            return group_h.is_homomorphic(self)
+        elif group_h.order % self.order == 0:
+            # logger.debug('Determining if g and h is a homomorphism')
+            for phi in Permutation.generator(group_h.order):
+                print('phi = {}'.format(phi))
+                for a, b in itr.product(self.element_set, repeat=2):
+                    if phi[self.multiply(a, b)] != group_h.multiply(phi[a], phi[b]):
+                        break
+                else:
+                    return True, str(phi)
+            return False, ''
+        else:
+            return False, ''
+
+    def is_isomorphic(self, group_h: Group_Type) -> bool:
+        if self.order == group_h.order:
+            return self.is_homomorphic(group_h)[0]
+        else:
+            return False
+
+    def orbit(self, element: int) -> List[int]:
+        """
+        The Element 'x' orbit is:-
+        [x, x^2, x^3, ...,x^n]
+        Where x^n=0 (Identity)
+        :param element: int: An element in the group
+        :return: element orbit
+        """
+        orbit = [element]
+        while 0 not in orbit:
+            orbit.append(self.multiply(orbit[-1], element))
+        return orbit
+
+    @property
+    def orbits(self) -> List[List[int]]:
+        """
+        Lists all Element orbits where The Element 'x' orbit is:-
+        [x, x^2, x^3, ...,x^n]
+        Where x^n=0 (Identity)
+        :return: list of all the element orbits
+        """
+        if self._orbits is None:
+            self._orbits = list()
+            for el in self.element_set:
+                self._orbits.append(self.orbit(el))
+        return self._orbits
+
+    def element_order(self, element) -> int:
+        """
+        Element x have order n where x^n=e (group Identity)
+        :param element: element in the Group
+        :return: element order -> int
+        """
+        return len(self.orbit(element))
+
+    @property
+    def generators(self) -> List[List[int]]:
+        """
+        the smallest subset of group elements that can generate the complete group element set.
+        :return: List of group generators
+        """
+        if self._generators is None:
+            def generated_elements(gens) -> List[int]:
+                if len(gens) < 1:
+                    return []
+                elif len(gens) == 1:
+                    return self.orbit(gens[0])
+                elif len(gens) == 2:
+                    element_generated = set()
+                    for x, y in itr.product(self.orbits[gens[0]], self.orbits[gens[1]]):
+                        element_generated.add(self.multiply(x, y))
+                else:
+                    element_generated = set()
+                    for g1, g2 in itr.combinations(gens, r=2):
+                        element_generated.union(set(generated_elements([g1, g2])))
+
+                element_generated = list(element_generated)
+                element_generated.sort()
+                return element_generated
+
+            generators_list = list()
+            # logger.debug('{} divisors are {}'.format(self.order, [_ for _ in PrimeLib.find_divisors(self.order)]))
+            for n in PrimeLib.find_divisors(self.order):
+                # logger.debug('n = {}'.format(n))
+                for g in itr.combinations(self.element_set, r=n):
+                    # logger.debug('g = {}'.format(g))
+                    # logger.debug('element orders = {}'.format([self.element_order(_) for _ in g]))
+                    if functools.reduce(lambda x, y: x * y, [self.element_order(_) for _ in g], 1) < self.order:
+                        # logger.debug('Skip')
+                        continue
+                    # logger.debug('generated elements are \n{}'.format(generated_elements(g)))
+                    for g_existing in generators_list:
+                        if set(g).issubset(set(g_existing)):
+                            # logger.debug('generators already existing')
+                            break
+                    else:
+                        if generated_elements(g) == self.element_set:
+                            # logger.debug('Added')
+                            generators_list.append(list(g))
+                            continue
+                        # logger.debug('discarded')
+            self._generators = generators_list
+        return self._generators
+
+    def inverse(self, element: int) -> int:
+        """
+        The inverse of the element is when
+        element * inverse = Identity (0)
+        :param element: Group element
+        :return:element inverse
+        """
+        if element not in self.element_set:
+            raise ValueError('{} is not a Group element.'.format(element))
+        for inv in self.element_set:
+            if self.multiply(element, inv) == 0:
+                return inv
+
+    @property
+    def center(self) -> List[int]:
+        """
+        All the subset of Group elements that  that commute with every element of G.
+        :return: Group center elements
+        """
+        if self._center is None:
+            center_list = set()
+            for a in self.element_set:
+                for b in self.element_set:
+                    if self.multiply(a, b) != self.multiply(b, a):
+                        break
+                else:
+                    center_list.add(a)
+            self._center = [_ for _ in center_list]
+        return self._center
+
+    def conjugacy_class_of(self, a: int) -> List[int]:
+        """
+        A conjugacy class that the group element 'a' is in
+        :param a: Group element 'a'
+        :return: CL(a)
+        """
+        cl = {a}
         for b in self.element_set:
             for g in self.element_set:
                 if self.multiply(a, g) == self.multiply(g, b) and a != b:
-                    cl = cl.append(pd.DataFrame([b]), ignore_index=True)
                     break
-        m = min(cl.values.flat)
-        header = 'CL({})'.format(self.label_of(m) if self.display_labels else m)
-        cl.columns = [header]
-        cl.drop_duplicates(inplace=True, keep='first')
-        cl.dropna(inplace=True)
-        cl = cl.reindex(index=list(range(len(cl))))
-        return cl
+            else:
+                cl.add(b)
+        cl = cl - set(self.center)
+        return list(cl)
 
     @property
-    def conjugacy_classes(self) -> pd.DataFrame:
+    def conjugacy_classes(self) -> List[List[int]]:
         """
-
-        :return:
+        A conjugacy class in a group can be defined in any of the following ways:
+        It is an orbit of the group (as a set) under the action of the group on itself by conjugation
+        (or as inner automorphisms) It is an equivalence class under the equivalence relation of being conjugate.
+        :return: list of Group conjugacy classes
         """
-        all_cl = self.center
-        all_cl.columns = ['Center']
-        done = set(map(self.element_of, self.center.values.flat))
+        all_cl = list()
+        all_cl.append(self.center)
+        done = set(self.center)
         for el in self.element_set:
             print('Doing {}'.format(el))
             print(all_cl)
@@ -467,362 +537,34 @@ class Group(object):
             print('Doing {}'.format(el))
             cl = self.conjugacy_class_of(el)
             print(cl)
-            done |= set(map(self.element_of, cl.values.flat))
-            all_cl = pd.concat([all_cl, cl], axis=1)
+            done |= set(cl)
+            all_cl.append(cl)
         return all_cl
 
-    # @log_decorator(logger)
+    # Representations
     @property
-    def orbits(self) -> pd.DataFrame:
+    def multiplication_table(self) -> pd.DataFrame:
         """
-        Lists all Element orbits where The Element 'x' orbit is:-
-        [x, x^2, x^3, ...,x^n]
-        Where x^n=0 (Identity)
-        :return: list of all the element orbits
+        Outputs the multiplication table with the element tables
+        :return: pandas.DataFrame: multiplication table
         """
+        if self._multiplication_table is None:
+            self._multiplication_table = self.cayley_table.replace(to_replace=self.element_set,
+                                                                   value=self.labels.values,
+                                                                   inplace=False)
+        return self._multiplication_table
 
-        all_orbits = pd.DataFrame()
-        for element in self.element_set:
-            all_orbits = pd.concat([all_orbits, self.orbit(element)], axis=1)
-        all_orbits = pd.DataFrame(all_orbits)
 
-        if self.display_labels:
-            all_orbits.replace(self.element_labels.to_dict(), inplace=True)
-            all_orbits.fillna(value='', inplace=True)
-        return all_orbits
+class NotValidGroupTable(Exception):
+    def __init__(self, message):
+        super(NotValidGroupTable, self).__init__(message)
 
-    def orbit(self, element: int) -> pd.Series:
-        """
-        The Element 'x' orbit is:-
-        [x, x^2, x^3, ...,x^n]
-        Where x^n=0 (Identity)
-        :param element: int: An element in the group
-        :return: element orbit
-        """
-        ele = element
-        orbit = [ele]
-        while ele != Group.Identity:
-            ele = self.multiply(ele, element)
-            orbit.append(ele)
-        header = '<{}>'.format(self.label_of(element)
-                               if self.display_labels
-                               else '<{}>'.format(element))
-        orbit = pd.Series(orbit).rename(header)
-        if self.display_labels:
-            orbit.replace(self.element_labels.to_dict(), inplace=True)
-        return orbit
 
-    def element_order(self, element: int) -> int:
-        """
-        Element x have order n where x^n=e (group Identity)
-        :param element: element in the Group
-        :return: element order -> int
-        """
-        return len(self.orbit(element).values)
+class GroupAxiomsViolationClosure(Exception):
+    def __init__(self, message):
+        super(GroupAxiomsViolationClosure, self).__init__(message)
 
-    @property
-    def elements_order(self) -> pd.DataFrame:
-        order_list = dict()
-        for el in self.element_set:
-            order = self.element_order(el)
-            if order not in order_list.keys():
-                order_list[order] = [el]
-            else:
-                order_list[order].append(el)
-        order_list = pd.DataFrame(order_list)
-        if self.display_labels:
-            order_list.replace(self.element_labels.to_dict(), inplace=True)
-        return order_list
 
-    # Element Labeling
-    @property
-    def display_labels(self):
-        return self._display_labels
-
-    @display_labels.setter
-    def display_labels(self, value: bool):
-        assert value in [True, False]
-        self._display_labels = value
-        return
-
-    @label_handling_decorator(2)
-    def test(self, a: int, b: int) -> pd.DataFrame:
-        print('({}, {})'.format(a, b))
-        return pd.DataFrame({'a': [a], 'b': [b], 'a*b': [self.multiply(a, b)]})
-
-    def test2(self, a: int, b: int) -> pd.DataFrame:
-        print('({}, {})'.format(a, b))
-        return pd.DataFrame({'a': [a], 'b': [b], 'a*b': [self.multiply(a, b)]})
-
-    @property
-    def element_labels(self):
-        return self._element_labels
-
-    @element_labels.setter
-    def element_labels(self, labels: pd.Series):
-        if len(self) > len(labels):
-            # Lables does incloude all elements
-            raise ValueError('Group elements are {} and given lables are {}'
-                             .format(self.order, len(labels) + 1))
-        if len(set(labels)) != len(labels):
-            # Lables must be Unique
-            raise ValueError('Lables must be Unique')
-        self._element_labels = labels
-
-    def label_of(self, element):
-        if isinstance(element, str):
-            try:
-                return self.element_labels.index[self.element_labels == element][0]
-            except IndexError:
-                raise IndexError('There is no element with label "{}'.format(element))
-        else:
-            try:
-                return self.element_labels[element]
-            except IndexError:
-                raise IndexError('The {}th Element is not in the element set.'.format(element))
-
-    def element_of(self, element):
-        if isinstance(element, str):
-            return self.label_of(element)
-        else:
-            if element in self.element_set:
-                return element
-            else:
-                raise ValueError('element {} is not in group element set'.format(element))
-
-    # Group to Group method
-    @log_decorator(logger)
-    def find_homomorphic_mapping(self, group_h: Group_Type) -> list:  # to be implemented
-        if self.order < group_h.order:
-            return group_h.is_homomorphic(self)
-        elif self.order % group_h.order != 0:
-            return []  # The bigger order of G & H must devides the other
-        # check all possible mapping
-        mapping_list = list()
-        for gens in self.generators:
-            for mapping in Mapping.mapping_generator(len(gens), group_h.Order):
-                logger.debug('mapping generators to element in H_group.')
-                logger.debug(['\nphi[{}] = {}'.format(_, mapping[_]) for _ in gens])
-                for gen in gens:  # iterate though all generator list
-                    for g in gen:  # iterate though the generators
-                        h = mapping[g]
-                        g_orbit = self.orbit(g)
-                        h_orbit = group_h.orbit(h)
-                        gl, hl = len(g_orbit), len(h_orbit)
-                        if max(gl, hl) % min(gl, hl) != 0:
-                            # orbit lengths of g in Group G and h in group H
-                            # are not divisible to each other
-                            # find other mapping
-                            break
-                        # repeat the smaller orbit to match the bigger obit length
-                        if gl > hl:
-                            h_orbit = [_ for _ in itertools.repeat(h_orbit, gl // hl)]
-                            h_orbit = [_ for _ in itertools.chain(*h_orbit)]
-                        else:
-                            g_orbit = [_ for _ in itertools.repeat(g_orbit, hl // gl)]
-                            g_orbit = [_ for _ in itertools.chain(*g_orbit)]
-                        # add mapping links
-                        for g1, h1 in zip(g_orbit, h_orbit):
-                            mapping.add_link(g1, h1)
-                    else:
-                        # No break hence add the mapping to te list
-                        logger.debug('Checking homomorphism condition with the following mapping:-\n{}'
-                                     .format(mapping))
-                        if self.is_homomorphic(group_h, mapping):
-                            mapping_list.append(mapping)
-                        mapping_list.append(mapping)
-                        continue
-                    # break has occurred hence skip this mapping scheme
-                    continue
-            return mapping_list
-
-    @log_decorator(logger)
-    def is_homomorphic(self, group_h: Group_Type, mapping: Mapping_Type = None):
-        if self.order < group_h.order:
-            return group_h.is_homomorphic(self)
-        elif self.order % group_h.order:
-            return False  # The bigger order of G & H must devides the other
-
-        for g1, g2 in itertools.product(self.element_set, repeat=2):
-            try:
-                logger.debug('Checking the homomorphism condition on ({}, {})'
-                             .format(g1, g2))
-                lhs = mapping[self.multiply(g1, g2)]
-                rhs = group_h.multiply(mapping[g1], mapping[g2])
-                homomorphism_condition = lhs == rhs
-                if not homomorphism_condition:
-                    logger.debug('phi[ {} * {}] =? phi[{}] # phi[{}] for (G,*) , (H,#)'
-                                 .format(g1, g2, g1, g2))
-                    logger.debug('h[{}] =? {} # {}'
-                                 .format(self.multiply(g1, g2), mapping[g1], mapping[g2]))
-                    logger.debug('{} = {}\t[{}]'.format(lhs, rhs, homomorphism_condition))
-                    return False
-            except IndexError:
-                logger.debug('homomorphism condition failed due to mapping discrepancy')
-                return False
-        else:
-            return True
-
-    # @log_decorator(logger)
-    def find_isomorphic_mapping(self, group_h: Group_Type) -> (bool, Mapping_Type):
-        """
-
-        :param group_h:
-        :return:
-        """
-        if len(self) != len(group_h):
-            return False, None
-        else:
-            return self.find_homomorphic_mapping(group_h)
-
-    @property
-    @log_decorator(logger)
-    def subgroups(self):
-        """List the proper subgroups of the Group G"""
-        # to avoid double calculation
-        if self._subgroups is not None:
-            return self._subgroups
-
-        logger.debug('Finding subgroups of group of order {}'.format(self.order))
-        if prime_test(self.order):
-            logger.debug('Since the Group order {} is prime there no subgroups.'.format(self.order))
-            return list()
-        divisors = find_divisors(self.order)
-        subgroup_list = []
-        for subgroup_size in divisors:
-            if subgroup_size < 2 or subgroup_size == self.order:
-                logger.debug('Not considering subgroup of size {} since only interested on proper subgroups.'
-                             .format(subgroup_size))
-                continue  # Only proper subgroups
-            logger.debug('Finding Subgroups of size {}'.format(subgroup_size))
-            for subgroup_elements in itertools.combinations(self.element_set, r=subgroup_size):
-                logger.debug('Checking if elements {} form a subgroup.'.format(subgroup_elements))
-                if Group.Identity not in subgroup_elements:
-                    logger.debug('interested on subgroups only excluding cosets.')
-                    continue
-                try:
-                    sg = Group.from_definition(
-                        lambda x, y: str(self.multiply(x, y)),
-                        subgroup_elements)
-                    subgroup_list.append(sg)
-                    logger.debug(
-                        '{} of size {} makes a VAILD subgroup'.format(subgroup_elements, len(subgroup_elements)))
-                except Exception as excep:
-                    logger.debug('{} of size {} is not subgroup'.format(subgroup_elements, len(subgroup_elements)))
-                    logger.error(excep)
-                    continue
-        self._subgroups = subgroup_list
-        return self._subgroups
-
-    @property
-    # @log_decorator(logger)
-    @label_handling_decorator(0)
-    def generators(self) -> list:
-        print('Start')
-        display_label_state = self.display_labels
-        self.display_labels = False
-
-        def generated_elements(gens: list):
-            if len(gens) < 1:
-                return []
-            elif len(gens) == 1:
-                return self.orbit(gens[0]).drop_duplicates().values.tolist()
-            elif len(gens) == 2:
-                [x, y] = gens
-                generated_ele = set()
-                for xi, yi in itertools.product(self.orbit(x).values.tolist(),
-                                                self.orbit(y).values.tolist()):
-                    generated_ele.add(self.multiply(xi, yi))
-                generated_ele = list(generated_ele)
-                generated_ele.sort()
-                return generated_ele
-            else:
-                return functools.reduce(lambda a, b: set(generated_elements([a, b])), gens, {0})
-
-        generators_list = []
-        print('{} divisors are {}'.format(self.order, [_ for _ in find_divisors(self.order)]))
-        for n in find_divisors(self.order):
-            print('n = {}'.format(n))
-            for g in itertools.combinations(self.element_set, r=n):
-                print('g = {}'.format(g))
-                print('generated elements are \n{}'.format(generated_elements(g)))
-                for g_existing in generators_list:
-                    if set(g).issubset(set(g_existing)):
-                        print('generators already existing')
-                        break
-                else:
-                    if generated_elements(g) == self.element_set:
-                        print('Added')
-                        generators_list.append(g)
-                        continue
-                    print('discarded')
-        self.display_labels = display_label_state
-        return generators_list
-
-    @property
-    def to_html(self) -> str:
-        def tag(tag_name: str, inner_text: str = None, attributes: dict = None):
-            output = '<' + tag_name
-            if attributes is not None:
-                for att, value in attributes.items():
-                    output += ' ' + att + '=' + '"' + value + '"'
-            output += '>'
-            if inner_text is not None:
-                output += inner_text + '</' + tag_name + '>'
-            return output
-
-        group_properties = pd.DataFrame(
-            columns=['property'],
-            index=['order', 'Abeailan', 'Simple', 'solvable'],
-            data=[self.order, self.is_abeailan, self.is_simple, self.is_solvable]
-        )
-        content = tag('h1', 'Group Name:')
-        content += tag('p', '{}'.format(self.name))
-        content += tag('h1', 'Group Reference:')
-        content += tag('p', '{}'.format(self.reference))
-        content += tag('h1', 'Group properties:')
-        content += group_properties.to_html()
-        content += tag('h1', 'Element labels:')
-        label_list = self.cayley_table.labels.to_frame()
-        label_list.columns = ['Label']
-        content += label_list.to_html()
-        content += tag('h1', 'Multiplication table:-')
-        content += tag('p', self.cayley_table.to_html())
-
-        html_output = tag('Title', self.name)
-        html_output += tag(tag_name='links', attributes={'rel': 'stylesheet', 'href': 'stylesheet.css'})
-        html_output = tag('head', html_output)
-        html_output += tag('body', content)
-        return '<!DOCTYPE html>' + tag('html', html_output)
-
-    def export_to_html(self, filename):
-        with open(filename, 'w') as html_file:
-            html_file.write(self.to_html)
-            print('HTML File have been written in ' + filename + '.\n')
-
-    def plot(self, annot=True):
-        return sns.heatmap(self.cayley_table,
-                           annot=annot,
-                           fmt="g",
-                           cmap='viridis',
-                           cbar_kws={"ticks": self.element_set})
-
-    # ## Database methods ## #
-    @property
-    def reference(self):
-        if self._reference is None:
-            with group_db() as db:
-                counter = 0
-                group_ref = 'G{}-{}'.format(self.order, counter)
-                refs = db.cursor().execute('SELECT GroupRef FROM Groups')
-                for ref in refs:
-                    if group_ref != ref or ref is None:
-                        self._reference = group_ref
-                        break
-                    counter += 1
-        return self._reference
-
-    def export_to_db(self):
-        with group_db() as db:
-            add_mul_table = 'Create'
-            self.cayley_table.to_sql(add_mul_table, db.connection)
+class GroupAxiomsViolationAssociativity(Exception):
+    def __init__(self, message):
+        super(GroupAxiomsViolationAssociativity, self).__init__(message)
