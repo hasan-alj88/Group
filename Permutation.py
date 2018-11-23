@@ -3,7 +3,7 @@ from collections import Counter
 from math import factorial
 from random import randint
 # from StringIO import StringIO # if sys.version_info[0] < 3
-from typing import TypeVar
+from typing import TypeVar, List
 
 import pandas as pd
 
@@ -50,7 +50,7 @@ class Permutation(object):
 
     @classmethod
     # @log_decorator(logger)
-    def of_the_array(cls, arr):
+    def of_the_array(cls, arr: List[int])-> Permutation_Type:
         """
         Permutation constructor by entering the permutated array
         :param arr: permutated array input
@@ -71,7 +71,7 @@ class Permutation(object):
 
     @classmethod
     # @log_decorator(logger)
-    def of_input_array(cls, arr: list, sorted_arr: list):
+    def of_input_array(cls, arr: list, sorted_arr: list)->Permutation_Type:
         """
         his will Create the permutation  object where its permutation is relative to a sorted array
         [!] All the elements must be present in both arrays.
@@ -94,7 +94,7 @@ class Permutation(object):
         return Permutation.of_input_array(list(series), series.index)
 
     @classmethod
-    def of_cyclic_notation(cls, cyclic_input: str):
+    def of_cyclic_notation(cls, cyclic_input: str)->Permutation_Type:
         """
          This will create the permutation presented in the cyclic notation.
         :param cyclic_input: string of the cyclic notation.
@@ -117,23 +117,29 @@ class Permutation(object):
             p = Permutation.of_the_array(p.permutated_array)
         return p
 
-    def rotate(self, n=1):
+    def rotate(self, n: int=1)->Permutation_Type:
+        """
+        rotate the permutated array n times.
+        [!] note that the size of the array is the largest permuted element.
+        :param n:
+        :return:
+        """
         arr = []
         for i in range(n):
             arr = list(Permutation.rotate_array(self.permutated_array))
         return Permutation.of_the_array(arr)
 
     @staticmethod
-    def rotate_array(arr):
+    def rotate_array(arr: List)->List:
         return [arr[-1]] + arr[:-1]
 
-    def apply(self, array):
+    def apply(self, array: List)->List:
         for x, y in self.Swaps:
             array = Permutation.apply_swap(array, x, y)
         return array
 
     @staticmethod
-    def array_validation(arr: list) -> bool:
+    def array_validation(arr: List[int]) -> bool:
         """
         Test
         :param arr: Input array where :-
@@ -155,7 +161,7 @@ class Permutation(object):
         return
 
     # @log_decorator(logger)
-    def permutated_array_of_length(self, array_size: int = 0):
+    def permutated_array_of_length(self, array_size: int = 0)->List[int]:
         if array_size == 0:
             array_size = len(self)
         if array_size < len(self):
@@ -166,7 +172,7 @@ class Permutation(object):
         return arr
 
     @property
-    def permutated_array(self) -> list:
+    def permutated_array(self) -> List[int]:
         return self.permutated_array_of_length(len(self))
 
     def __getitem__(self, index: int) -> int:
@@ -176,7 +182,7 @@ class Permutation(object):
             return index
 
     @property
-    def cycles(self):
+    def cycles(self)->List[List[int]]:
         """
         A cycle is set the set of elements that have been rotated/Cycled
         their position.
@@ -205,9 +211,8 @@ class Permutation(object):
         return cycles_list
 
     @property
-    def is_idel(self):
+    def is_idel(self)->bool:
         """
-
         :return:
         """
         p = Permutation.of_the_array(self.permutated_array)  # Refresh
@@ -231,16 +236,18 @@ class Permutation(object):
             arr = Permutation.apply_swap(arr, index1, index2)
         return p
 
-    def is_derangement_of(self, other: Permutation_Type) -> bool:
+    def is_derangement_of(self,
+                          other: Permutation_Type,
+                          n: int = 0) -> bool:
         """
         Compare this Permutation object with 'other' Permutation object
          and confirms if they a derangement of each other.
-         IE there no elements in the same palace in both of them.
+         IE there no element maps to its self.
         :param other: The other Permutation object
+        :param n:
         :return:
         """
-        assert (isinstance(other, Permutation))
-        n = max(len(self), len(other))
+        n = max(len(self), len(other)) if n == 0 else max([len(self), len(other), n])
         arr1, arr2 = self.permutated_array_of_length(n), other.permutated_array_of_length(n)
         for x, y in zip(arr1, arr2):
             if x == y:
@@ -248,7 +255,7 @@ class Permutation(object):
         else:
             return True
 
-    def elements_in_place(self, other: Permutation_Type) -> list:
+    def elements_in_place(self, other: Permutation_Type) -> List[int]:
         """
         Compare this Permutation object with 'other' Permutation object and returns the elements
          whom are the same on both permutation objects.
@@ -262,7 +269,7 @@ class Permutation(object):
         return ans
 
     @staticmethod
-    def generator(n: int):
+    def generator(n: int)->Permutation_Type:
         """
         Generate Permutation objects of an array size (n)
         :param n: array max size
@@ -273,7 +280,7 @@ class Permutation(object):
             yield Permutation.of_the_array(list(p))
 
     @staticmethod
-    def apply_swap(arr: list, index1: int, index2: int) -> list:
+    def apply_swap(arr: List[int], index1: int, index2: int) -> List[int]:
         """
         function returns the array 'arr' with the elements of
         indeices index1 & index2 swapped
@@ -293,3 +300,25 @@ class Permutation(object):
         for ind, p in enumerate(Permutation.generator(size)):
             if ind == n:
                 return p
+
+    @staticmethod
+    def latin_square_generator(size: int)->pd.DataFrame:
+        def no_duplicates(grid: List[Permutation_Type])->bool:
+            for row1, row2 in itertools.combinations(grid, r=2):
+                if not row1.is_derangement_of(row2, n=size):
+                    return False
+            else:
+                return True
+        for row in range(1, size):
+            square = [Permutation()]
+            for permu in Permutation.generator(size+1):
+                # print('Checking {}'.format(permu.permutated_array_of_length(size)))
+                if no_duplicates(square + [permu]):
+                    # print('Added {}'.format(permu.permutated_array_of_length(size)))
+                    square.append(permu)
+            yield pd.DataFrame([_.permutated_array_of_length(size) for _ in square])
+
+
+
+
+
