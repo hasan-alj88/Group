@@ -3,7 +3,7 @@ from collections import Counter
 from math import factorial
 from random import randint
 from typing import List, Tuple, Self
-
+from functools import cached_property
 from pydantic import BaseModel, Field, ConfigDict
 
 
@@ -50,7 +50,14 @@ class Permutation(BaseModel):
         return self + other.inv
 
     def __eq__(self, other: Self) -> bool:
-        return hash(self) == hash(other)
+        return self.permuted_array == other.permuted_array
+
+    def __getitem__(self, item) -> int:
+        assert isinstance(item, int), f'Index must be an integer, not {type(item)}'
+        try:
+            return self.permuted_array[item]
+        except IndexError:
+            return item
 
     @classmethod
     def of_the_array(cls, arr: List[int]) -> Self:
@@ -150,12 +157,12 @@ class Permutation(BaseModel):
         """Add a swap to the permutation"""
         self.swaps.append((min(a, b), max(a, b)))
 
-    @property
+    @cached_property
     def max_index(self) -> int:
         """Get the maximum index"""
         return max(map(max, self.swaps), default=0)
 
-    @property
+    @cached_property
     def permuted_array(self) -> List[int]:
         """Get the permuted array"""
         if len(self.swaps) == 0:
@@ -190,46 +197,43 @@ class Permutation(BaseModel):
 
         # Apply swaps to construct the permutation
         for i, j in self.swaps:
-            arr = self.apply_swap(arr, i, j)
+            arr[i], arr[j] = arr[j], arr[i]
 
         return arr
 
-    @property
+    @cached_property
     def cycles(self) -> List[List[int]]:
-        """Get the cycles in the permutation"""
-        cycles_list = []
+        """Get the cycles in the permutation using improved algorithm"""
         arr = self.permuted_array
+        if not arr:
+            return []
+
+        cycles_list = []
         seen = set()
 
-        # Iterate through array indices
-        for x in range(len(arr)):
-            # Skip if already seen or maps to itself
-            if x in seen or x == arr[x]:
+        # Use array indexing instead of the following cycles
+        next_indices = {i: arr[i] for i in range(len(arr))}
+
+        for start in range(len(arr)):
+            if start in seen or next_indices[start] == start:
                 continue
 
             cycle = []
-            current = x
-            # Follow the cycle until we return to start
-            while current not in cycle:
+            current = start
+            while current not in seen:
                 cycle.append(current)
                 seen.add(current)
-                current = arr[current]
+                current = next_indices[current]
 
             if len(cycle) > 1:
+                # Rotate to minimum element
+                min_pos = cycle.index(min(cycle))
+                cycle = cycle[min_pos:] + cycle[:min_pos]
                 cycles_list.append(cycle)
 
-        # Sort the cycles by their minimum element
-        cycles_list.sort(key=lambda c: min(c))
+        return sorted(cycles_list, key=lambda c: c[0])
 
-        # For each cycle, rotate until minimum element is first
-        for c in cycles_list:
-            min_element = min(c)
-            while c[0] != min_element:
-                c.append(c.pop(0))  # rotate left until min element is first
-
-        return cycles_list
-
-    @property
+    @cached_property
     def inv(self) -> Self:
         """Get the inverse permutation"""
         p = Permutation(swaps=[])
@@ -240,21 +244,26 @@ class Permutation(BaseModel):
                 continue
             index2 = arr.index(index1)
             p.add_swap(index1, index2)
-            arr = self.apply_swap(arr, index1, index2)
+            arr[index1], arr[index2] = arr[index2], arr[index1]
 
         return p
 
-    @staticmethod
-    def rotate_array(arr: List) -> List:
-        """Rotate an array"""
-        return [arr[-1]] + arr[:-1]
+    @cached_property
+    def shifted_by(self) -> int:
+        """Get the shift of the permutation"""
+        return min(map(min, self.swaps), default=0)
 
-    @staticmethod
-    def apply_swap(arr: List[int], index1: int, index2: int) -> List[int]:
-        """Apply a swap to an array"""
-        arr_copy = arr.copy()
-        arr_copy[index1], arr_copy[index2] = arr_copy[index2], arr_copy[index1]
-        return arr_copy
+    @cached_property
+    def shift(self, shift_by: int) -> Self:
+        """Shift the permutation by a given number"""
+        swaps = [(a+shift_by, b+shift_by) for a, b in
+                 self.swaps]
+        return Permutation(swaps=swaps)
+
+    @cached_property
+    def standard_form(self) -> Self:
+        """Get the standard form of the permutation"""
+        return self.shift(-self.shifted_by)
 
     @staticmethod
     def generator(n: int):
@@ -265,11 +274,20 @@ class Permutation(BaseModel):
 
     @staticmethod
     def random(size: int) -> Self:
-        """Generate a random permutation of given size"""
-        n = randint(1, factorial(size))
-        for ind, p in enumerate(Permutation.generator(size)):
-            if ind == n:
-                return p
+        """Generate a random permutation of given size using Fisher-Yates shuffle"""
+        arr = list(range(size))
+        for i in range(size - 1, 0, -1):
+            j = randint(0, i)
+            arr[i], arr[j] = arr[j], arr[i]
+
+        if arr == list(range(size)):
+            return Permutation(swaps=[])
+        elif arr[-1] == size-1:
+            # if the last element is in its place, swap it with random element
+            j = randint(0, size-2)
+            arr[-1], arr[j] = arr[j], arr[-1]
+
+        return Permutation.of_the_array(arr)
 
 if __name__ == '__main__':
     arr = [1, 0, 2, 4, 3]

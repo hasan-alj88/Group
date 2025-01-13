@@ -341,16 +341,6 @@ class TestPermutation(TestCase):
         print(f"Cycles: {p.cycles}")
         self.assertEqual(p.cycles, [[0, 1], [3, 4]])
 
-    # - apply_swap method
-    def test_apply_swap(self):
-        """Test apply_swap method."""
-        arr = [1, 0, 2]
-        p = Permutation.of_the_array(arr)
-        result = p.apply_swap(arr, 0, 1)
-        print(f"Original array: {arr}")
-        print(f"Result: {result}")
-        self.assertEqual(result, [0, 1, 2])
-
     # - generator method
     def test_generator(self):
         """Test generator method."""
@@ -359,5 +349,10 @@ class TestPermutation(TestCase):
         print(f"Permutations of size {n}: {permutations}")
         self.assertEqual(len(permutations), 6)
 
-
-    # etc.
+    # - random method
+    def test_random(self):
+        """Test random method."""
+        n = 3
+        p = Permutation.random(n)
+        print(f"Random permutation of size {n}: {p}")
+        self.assertEqual(len(p.permuted_array), n)
