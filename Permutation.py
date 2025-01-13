@@ -2,323 +2,278 @@ import itertools
 from collections import Counter
 from math import factorial
 from random import randint
-# from StringIO import StringIO # if sys.version_info[0] < 3
-from typing import TypeVar, List
+from typing import List, Tuple, Self
 
-import pandas as pd
-
-Permutation_Type = TypeVar('Permutation_Type', bound='Permutation')
+from pydantic import BaseModel, Field, ConfigDict
 
 
-# from log_configuration import logger, log_decorator
-
-
-class Permutation(object):
+class Permutation(BaseModel):
     """
-    This object holds the permutation of the array of
-    [0 ,1 ,2 ,3 ,... (n-1)]
+    This object holds the permutation of the array [0, 1, 2, 3, ... (n-1)]
     where 'n' is the array length
     """
+    swaps: List[Tuple[int, int]] = Field(default=None, alias="Swaps")
 
-    def __init__(self):
-        self.Swaps = list()
+    model_config = ConfigDict(
+        populate_by_name=True,
+        validate_assignment=True
+    )
 
-    def __len__(self):
-        return max(map(max, self.Swaps)) if len(self.Swaps) > 0 else 0
+    def model_post_init(self, __context) -> None:
+        if self.swaps is None:
+            self.swaps = []
 
-    def __str__(self):
-        string = ''
-        for Cycle in self.cycles:
-            string += '('
-            for index in Cycle:
-                if string[-1] != '(':
-                    string += ' ,'
-                string += str(index)
-            string += ')'
-        return string if len(string) > 0 else '()'
+    def __len__(self) -> int:
+        return len(self.permuted_array)
 
-    def __add__(self, other: Permutation_Type) -> Permutation_Type:
-        combination = Permutation()
-        combination.Swaps = self.Swaps + other.Swaps
-        return Permutation.of_the_array(combination.permutated_array)
+    def __str__(self) -> str:
+        cycles_list = self.cycles
+        if not cycles_list:
+            return '()'
 
-    def __sub__(self, other: Permutation_Type) -> Permutation_Type:
+        return ''.join(
+            f"({','.join(map(str, cycle))})"
+            for cycle in cycles_list
+        )
+
+    def __repr__(self) -> str:
+        return f"Permutation[{self.__str__()}]"
+
+    def __hash__(self) -> int:
+        return hash(str(self))
+
+    def __add__(self, other: Self) -> Self:
+        combination = Permutation(swaps=self.swaps + other.swaps)
+        return Permutation.of_the_array(combination.permuted_array)
+
+    def __sub__(self, other: Self) -> Self:
         return self + other.inv
 
-    def __eq__(self, other: Permutation_Type) -> Permutation_Type:
-        return self.permutated_array == other.permutated_array
+    def __eq__(self, other: Self) -> bool:
+        return hash(self) == hash(other)
 
     @classmethod
-    # @log_decorator(logger)
-    def of_the_array(cls, arr: List[int])-> Permutation_Type:
+    def of_the_array(cls, arr: List[int]) -> Self:
         """
-        Permutation constructor by entering the permutated array
-        :param arr: permutated array input
+        Permutation constructor by entering the permuted array
+        :param arr: permuted array input
         [!] the array must be an ordering of the sequence 0,...,(n-1)
-        :return: permutation object of the permutated array
+        :return: permutation object of the permuted array
         """
-        p = cls()
-        p.Swaps = list()
-        assert (p.array_validation(arr))
-        for index1, element in enumerate(arr):
-            if element == index1:
-                continue
-            index2 = [i for i, x in enumerate(arr) if x == index1][0]
-            p.add_swap(index1, index2)
-            arr = Permutation.apply_swap(arr, index1, index2)
-        p.Swaps.reverse()
-        return p
+        arr = list(map(abs, arr))
+        min_index = min(arr, default=0)
+        # insert the missing elements
+        if min_index > 0:
+            arr = list(range(min_index)) + arr
+        assert (Permutation.array_validation(arr))
+
+        # check if the array is already in identity form
+        if arr == list(range(len(arr))):
+            return cls(swaps=[])
+
+        swaps = []
+        current = arr.copy()
+        target = list(range(len(arr)))
+
+        # Work backwards from arr to identity
+        while current != target:
+            for i in range(len(current)):
+                if current[i] != target[i]:
+                    # Find the position containing the number we want
+                    j = current.index(target[i])
+                    # Add the swap
+                    swaps.append((min(i, j), max(i, j)))
+                    # Apply the swap
+                    current[i], current[j] = current[j], current[i]
+                    break
+
+        # Swaps were built going from arr to identity
+        # So we need to reverse them to go from identity to arr
+        swaps.reverse()
+        return cls(swaps=swaps)
 
     @classmethod
-    # @log_decorator(logger)
-    def of_input_array(cls, arr: list, sorted_arr: list)->Permutation_Type:
-        """
-        his will Create the permutation  object where its permutation is relative to a sorted array
-        [!] All the elements must be present in both arrays.
-            ie set(arr) intersection set(sorted_arr) == set(arr)
-        :type sorted_arr: list
-        :param arr: The disarranged array
-        :param sorted_arr: The elements in a sorted order
-        :return:
-        """
-        try:
-            input_array = list(map(sorted_arr.index, arr))
-        except ValueError as e:
-            raise ValueError(str(e) + ' of elements which violate closure axiom.\nList elements are\n{}'
-                             .format(sorted_arr))
-        return cls.of_the_array(input_array)
-
-    @classmethod
-    def of_input_series_object(cls, series: pd.Series) -> Permutation_Type:
-        series.replace(to_replace=series.index, value=list(series), inplace=True)
-        return Permutation.of_input_array(list(series), series.index)
-
-    @classmethod
-    def of_cyclic_notation(cls, cyclic_input: str)->Permutation_Type:
-        """
-         This will create the permutation presented in the cyclic notation.
-        :param cyclic_input: string of the cyclic notation.
-        [!] it must be integers separated by commas ',' enclosed by brackets (0,8,5) for example.
-        [i] The input can be many cycles (0,5,8)(10,2,9)...
-        :return: Permutation object of the input Cyclic notation
-        """
-
-        p = Permutation()
+    def of_cyclic_notation(cls, cyclic_input: str) -> Self:
         if cyclic_input == '()':
-            return p
-        cyclic_input = cyclic_input.strip().replace(' ', '')
-        for cycle in cyclic_input.split(')('):
-            cycle = cycle.replace('(', '')
-            cycle = cycle.replace(')', '')
-            indices = list(map(int, cycle.split(',')))
-            for index1, index2 in zip(indices, indices[1:]):
-                p.add_swap(index1, index2)
-            p.Swaps.reverse()
-            p = Permutation.of_the_array(p.permutated_array)
-        return p
+            return cls(swaps=[])
 
-    def rotate(self, n: int=1)->Permutation_Type:
-        """
-        rotate the permutated array n times.
-        [!] note that the size of the array is the largest permuted element.
-        :param n:
-        :return:
-        """
-        arr = []
-        for i in range(n):
-            arr = list(Permutation.rotate_array(self.permutated_array))
-        return Permutation.of_the_array(arr)
+        # remove all kinds of white spaces
+        cyclic_input = cyclic_input.replace(' ', '')
+
+        # validate the cyclic notation (should only contain digits, commas and parentheses)
+        if not all(c in '0123456789,()' for c in cyclic_input):
+            raise ValueError(f'Invalid cyclic notation: {cyclic_input}')
+
+        # replace ')(' with ; to split the cycles
+        cyclic_input = cyclic_input.replace(')(', ';')
+
+        # remove the parentheses
+        cyclic_input = cyclic_input.replace('(', '').replace(')', '')
+
+        # split the cycles
+        cycles = cyclic_input.split(';')
+
+        swaps = []
+        for cycle in cycles:
+            elements = [int(e) for e in cycle.split(',')]
+            swap_pairs = cls.cycle2swaps(elements)
+            swaps.extend(swap_pairs)
+
+        return cls(swaps=swaps)
 
     @staticmethod
-    def rotate_array(arr: List)->List:
-        return [arr[-1]] + arr[:-1]
+    def cycle2swaps(cycle: List[int]) -> List[Tuple[int, int]]:
+        """Convert a cycle to a list of swaps"""
+        def minmax(a, b):
+            return min(a, b), max(a, b)
 
-    def apply(self, array: List)->List:
-        for x, y in self.Swaps:
-            array = Permutation.apply_swap(array, x, y)
-        return array
+        if len(cycle) < 2:
+            raise ValueError(f'Cycle must have at least 2 elements: {cycle}')
+        else:
+            swaps = [minmax(cycle[i], cycle[i + 1])
+                     for i in range(len(cycle)-1)]
+        return swaps
 
     @staticmethod
     def array_validation(arr: List[int]) -> bool:
-        """
-        Test
-        :param arr: Input array where :-
-        All elements must be integers
-        All elements must be between 0 and (n-1)
-        :return:
-        """
+        """Validate the index array"""
         for element in arr:
             if element not in range(len(arr)):
-                raise ValueError('All elements must be integers and between 0 and (n-1)')
-        # All array elements must be Unique
+                raise ValueError(f'All elements must be integers and between 0 and (n-1).'
+                                 f'\n{arr}\n{Counter(arr)}')
+
         if len(arr) > len(set(arr)):
-            raise ValueError('All array elements must be Unique.\n' +
-                             '{}\n{}'.format(arr, Counter(arr)))
+            raise ValueError(f'All array elements must be Unique.\n{arr}\n{Counter(arr)}')
         return True
 
-    def add_swap(self, a: int, b: int):
-        self.Swaps.append((min(a, b), max(a, b)))
-        return
+    def add_swap(self, a: int, b: int) -> None:
+        """Add a swap to the permutation"""
+        self.swaps.append((min(a, b), max(a, b)))
 
-    # @log_decorator(logger)
-    def permutated_array_of_length(self, array_size: int = 0)->List[int]:
+    @property
+    def max_index(self) -> int:
+        """Get the maximum index"""
+        return max(map(max, self.swaps), default=0)
+
+    @property
+    def permuted_array(self) -> List[int]:
+        """Get the permuted array"""
+        if len(self.swaps) == 0:
+            return []
+
+        arr = self.permuted_array_of_length(self.max_index)
+
+        # Find the effective size of the permutation
+        effective_size = self.max_index + 1
+        for i in range(len(arr) - 1, -1, -1):
+            if arr[i] != i or i < effective_size:
+                effective_size = i + 1
+                break
+
+        # Return the array up to the effective size
+        result = arr[:effective_size]
+        if len(result) < 2:
+            return []
+        self.array_validation(result)
+        return result
+
+    def permuted_array_of_length(self, array_size: int = 0) -> List[int]:
+        """Get the permuted array of a specific length"""
+        max_index = self.max_index
         if array_size == 0:
-            array_size = len(self)
-        if array_size < len(self):
-            raise ValueError('Permuted array size must be >= {}'.format(len(self)))
+            array_size = max_index
+        if array_size < max_index:
+            raise ValueError(f'Permuted array size must be >= {max_index}')
+
+        # Start with identity permutation
         arr = list(range(array_size + 1))
-        for i, j in self.Swaps:
-            arr = Permutation.apply_swap(arr, i, j)
+
+        # Apply swaps to construct the permutation
+        for i, j in self.swaps:
+            arr = self.apply_swap(arr, i, j)
+
         return arr
 
     @property
-    def permutated_array(self) -> List[int]:
-        return self.permutated_array_of_length(len(self))
+    def cycles(self) -> List[List[int]]:
+        """Get the cycles in the permutation"""
+        cycles_list = []
+        arr = self.permuted_array
+        seen = set()
 
-    def __getitem__(self, index: int) -> int:
-        try:
-            return self.permutated_array[index]
-        except IndexError:
-            return index
-
-    @property
-    def cycles(self)->List[List[int]]:
-        """
-        A cycle is set the set of elements that have been rotated/Cycled
-        their position.
-        :return: list of all the elements cycles in the permutation
-        """
-        cycles_list = list()
-        arr = self.permutated_array
-        seen = list()
+        # Iterate through array indices
         for x in range(len(arr)):
+            # Skip if already seen or maps to itself
             if x in seen or x == arr[x]:
                 continue
-            cycle = list()
-            y = arr[x]
-            while y not in cycle:
-                seen.append(y)
-                cycle.append(y)
-                y = arr[y]
+
+            cycle = []
+            current = x
+            # Follow the cycle until we return to start
+            while current not in cycle:
+                cycle.append(current)
+                seen.add(current)
+                current = arr[current]
 
             if len(cycle) > 1:
-                cycle.reverse()
                 cycles_list.append(cycle)
+
+        # Sort the cycles by their minimum element
+        cycles_list.sort(key=lambda c: min(c))
+
+        # For each cycle, rotate until minimum element is first
         for c in cycles_list:
-            while min(c) != c[0]:
-                c = Permutation.rotate_array(c)
-        cycles_list.sort(key=lambda e: e[0])
+            min_element = min(c)
+            while c[0] != min_element:
+                c.append(c.pop(0))  # rotate left until min element is first
+
         return cycles_list
 
     @property
-    def is_idel(self)->bool:
-        """
-        :return:
-        """
-        p = Permutation.of_the_array(self.permutated_array)  # Refresh
-        self.Swaps = p.Swaps
-        return len(self.Swaps) == 0
+    def inv(self) -> Self:
+        """Get the inverse permutation"""
+        p = Permutation(swaps=[])
+        arr = self.permuted_array.copy()
 
-    @property
-    def inv(self) -> Permutation_Type:
-        """
-        if x' is the permutation inverse of x then
-        x * x' = () idel permutation
-        :return: The permutation inverse
-        """
-        p = Permutation()
-        arr = self.permutated_array
         for index1, element in enumerate(arr):
             if element == index1:
                 continue
-            index2 = [i for i, x in enumerate(arr) if x == index1][0]
+            index2 = arr.index(index1)
             p.add_swap(index1, index2)
-            arr = Permutation.apply_swap(arr, index1, index2)
+            arr = self.apply_swap(arr, index1, index2)
+
         return p
 
-    def is_derangement_of(self,
-                          other: Permutation_Type,
-                          n: int = 0) -> bool:
-        """
-        Compare this Permutation object with 'other' Permutation object
-         and confirms if they a derangement of each other.
-         IE there no element maps to its self.
-        :param other: The other Permutation object
-        :param n:
-        :return:
-        """
-        n = max(len(self), len(other)) if n == 0 else max([len(self), len(other), n])
-        arr1, arr2 = self.permutated_array_of_length(n), other.permutated_array_of_length(n)
-        for x, y in zip(arr1, arr2):
-            if x == y:
-                return False
-        else:
-            return True
-
-    def elements_in_place(self, other: Permutation_Type) -> List[int]:
-        """
-        Compare this Permutation object with 'other' Permutation object and returns the elements
-         whom are the same on both permutation objects.
-        :param other: the elements whom are the same on both permutation objects
-        :return:
-        """
-        ans = []
-        for x, y in zip(self.permutated_array, other.permutated_array):
-            if x == y:
-                ans.append(x)
-        return ans
+    @staticmethod
+    def rotate_array(arr: List) -> List:
+        """Rotate an array"""
+        return [arr[-1]] + arr[:-1]
 
     @staticmethod
-    def generator(n: int)->Permutation_Type:
-        """
-        Generate Permutation objects of an array size (n)
-        :param n: array max size
-        :return: Python Iterator of Permutation objects of an array size (n)
-        """
+    def apply_swap(arr: List[int], index1: int, index2: int) -> List[int]:
+        """Apply a swap to an array"""
+        arr_copy = arr.copy()
+        arr_copy[index1], arr_copy[index2] = arr_copy[index2], arr_copy[index1]
+        return arr_copy
+
+    @staticmethod
+    def generator(n: int):
+        """Generate all permutations of size n"""
         arr = list(range(n))
         for p in itertools.permutations(arr):
             yield Permutation.of_the_array(list(p))
 
     @staticmethod
-    def apply_swap(arr: List[int], index1: int, index2: int) -> List[int]:
-        """
-        function returns the array 'arr' with the elements of
-        indeices index1 & index2 swapped
-        :rtype: list
-        :return:
-        :param arr: the array to be swapped.
-        :param index1: first index of the swap element
-        :param index2: second index of the swap element
-        :return: a copy of input array with elements in index1 & index2 swapped
-        """
-        arr[index1], arr[index2] = arr[index2], arr[index1]
-        return arr
-
-    @staticmethod
-    def random(size: int) -> Permutation_Type:
+    def random(size: int) -> Self:
+        """Generate a random permutation of given size"""
         n = randint(1, factorial(size))
         for ind, p in enumerate(Permutation.generator(size)):
             if ind == n:
                 return p
 
-    @staticmethod
-    def latin_square_generator(size: int)->pd.DataFrame:
-        def no_duplicates(grid: List[Permutation_Type])->bool:
-            for row1, row2 in itertools.combinations(grid, r=2):
-                if not row1.is_derangement_of(row2, n=size):
-                    return False
-            else:
-                return True
-        for row in range(1, size):
-            square = [Permutation()]
-            for permu in Permutation.generator(size+1):
-                # print('Checking {}'.format(permu.permutated_array_of_length(size)))
-                if no_duplicates(square + [permu]):
-                    # print('Added {}'.format(permu.permutated_array_of_length(size)))
-                    square.append(permu)
-            yield pd.DataFrame([_.permutated_array_of_length(size) for _ in square])
-
-
-
-
-
+if __name__ == '__main__':
+    arr = [1, 0, 2, 4, 3]
+    p = Permutation.of_the_array(arr=arr)
+    print(f'p = {p}')
+    print(f'permuted array: {p.permuted_array}')
+    print(f'{p.permuted_array} == {arr} ... [{p.permuted_array == arr}]' )

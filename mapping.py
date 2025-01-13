@@ -118,7 +118,7 @@ class Mapping(object):
 
     @classmethod
     def of_permutation(cls, permutation_obj: Permutation_Type):
-        co_domain = permutation_obj.permutated_array
+        co_domain = permutation_obj.permuted_array
         domain = sorted(co_domain)
         return cls.create(domain, co_domain)
 
@@ -126,7 +126,7 @@ class Mapping(object):
     def get_permutation(self):
         if not self.is_bijective:
             raise ValueError('Mapping must be bijective to be a permutation.')
-        return Permutation.of_input_array(self.co_domain, self.co_domain)
+        return Permutation.of_an_array(self.co_domain, self.co_domain)
 
     def function(self, element_from: int) -> list:
         return self.links.loc[self.links['domain'] == element_from]['co_domain'].values.tolist()
