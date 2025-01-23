@@ -1,9 +1,9 @@
 import itertools
 from collections import Counter
-from math import factorial
+from functools import cached_property
 from random import randint
 from typing import List, Tuple, Self
-from functools import cached_property
+
 from pydantic import BaseModel, Field, ConfigDict
 
 
@@ -42,14 +42,14 @@ class Permutation(BaseModel):
     def __hash__(self) -> int:
         return hash(str(self))
 
-    def __add__(self, other: Self) -> Self:
+    def __mul__(self, other: 'Permutation') -> 'Permutation':
         combination = Permutation(swaps=self.swaps + other.swaps)
         return Permutation.of_the_array(combination.permuted_array)
 
-    def __sub__(self, other: Self) -> Self:
-        return self + other.inv
+    def __sub__(self, other: 'Permutation') -> 'Permutation':
+        return self * other.inv
 
-    def __eq__(self, other: Self) -> bool:
+    def __eq__(self, other: 'Permutation') -> bool:
         return self.permuted_array == other.permuted_array
 
     def __getitem__(self, item) -> int:
@@ -60,7 +60,7 @@ class Permutation(BaseModel):
             return item
 
     @classmethod
-    def of_the_array(cls, arr: List[int]) -> Self:
+    def of_the_array(cls, arr: List[int]) -> 'Permutation':
         """
         Permutation constructor by entering the permuted array
         :param arr: permuted array input
@@ -100,7 +100,7 @@ class Permutation(BaseModel):
         return cls(swaps=swaps)
 
     @classmethod
-    def of_cyclic_notation(cls, cyclic_input: str) -> Self:
+    def of_cyclic_notation(cls, cyclic_input: str) -> 'Permutation':
         if cyclic_input == '()':
             return cls(swaps=[])
 
@@ -161,6 +161,16 @@ class Permutation(BaseModel):
     def max_index(self) -> int:
         """Get the maximum index"""
         return max(map(max, self.swaps), default=0)
+
+    @cached_property
+    def order(self) -> int:
+        """Get the order of the permutation"""
+        perm = self
+        for i in range(len(self)+1):
+            if perm == Permutation():
+                return i
+            perm = perm * self
+        raise ValueError(f'Order of the permutation is not found for {self}')
 
     @cached_property
     def permuted_array(self) -> List[int]:
@@ -234,6 +244,16 @@ class Permutation(BaseModel):
         return sorted(cycles_list, key=lambda c: c[0])
 
     @cached_property
+    def is_even(self) -> bool:
+        """Check if the permutation is even"""
+        return len(self.swaps) % 2 == 0
+
+    @cached_property
+    def is_odd(self) -> bool:
+        """Check if the permutation is odd"""
+        return not self.is_even
+
+    @cached_property
     def inv(self) -> Self:
         """Get the inverse permutation"""
         p = Permutation(swaps=[])
@@ -253,27 +273,26 @@ class Permutation(BaseModel):
         """Get the shift of the permutation"""
         return min(map(min, self.swaps), default=0)
 
-    @cached_property
-    def shift(self, shift_by: int) -> Self:
+    def shift(self, shift_by: int) -> 'Permutation':
         """Shift the permutation by a given number"""
         swaps = [(a+shift_by, b+shift_by) for a, b in
                  self.swaps]
         return Permutation(swaps=swaps)
 
     @cached_property
-    def standard_form(self) -> Self:
+    def standard_form(self) -> 'Permutation':
         """Get the standard form of the permutation"""
-        return self.shift(-self.shifted_by)
+        return self.shift(shift_by=-self.shifted_by)
 
     @staticmethod
     def generator(n: int):
         """Generate all permutations of size n"""
-        arr = list(range(n))
-        for p in itertools.permutations(arr):
-            yield Permutation.of_the_array(list(p))
+        current_array = list(range(n))
+        for current_permutation in itertools.permutations(current_array):
+            yield Permutation.of_the_array(list(current_permutation))
 
     @staticmethod
-    def random(size: int) -> Self:
+    def random(size: int) -> 'Permutation':
         """Generate a random permutation of given size using Fisher-Yates shuffle"""
         arr = list(range(size))
         for i in range(size - 1, 0, -1):

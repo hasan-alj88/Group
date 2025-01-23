@@ -1,358 +1,227 @@
-from unittest import TestCase, TestResult
+import unittest
+from collections import defaultdict
+
+import numpy as np
+
+from FiniteGroup import FiniteGroup
 from Permutation import Permutation
 
 
-class DescriptionTestResult(TestResult):
-    def addError(self, test, err):
-        print(f"\nTest Description: {test.__doc__}")
-        super().addError(test, err)
+class PermutationTest(unittest.TestCase):
 
-    def addFailure(self, test, err):
-        print(f"\nTest Description: {test.__doc__}")
-        super().addFailure(test, err)
+    def test_of_cyclic_notation(self):
+        cyclic_notations = [
+            '(0,2,3)',
+            '(1,2)',
+            '(1,2)(3,4)',
+            '(0,5)(1,2,3)',
+        ]
+
+        for cyclic_notation in cyclic_notations:
+            p = Permutation.of_cyclic_notation(cyclic_notation)
+            self.assertEqual(cyclic_notation, str(p))
+
+    def test_of_cyclic_notation_invalid(self):
+        cyclic_notations = [
+            '(0,2,3,)',
+            '(0,5,,(1,2,3',
+        ]
+
+        for cyclic_notation in cyclic_notations:
+            print(cyclic_notation)
+            with self.assertRaises(ValueError):
+                Permutation.of_cyclic_notation(cyclic_notation)
 
 
-class TestPermutation(TestCase):
-    def run(self, result=None):
-        if result is None:
-            result = DescriptionTestResult()
-        return super().run(result)
+class TestFiniteGroup(unittest.TestCase):
+    def setUp(self):
+        # Common test groups
+        self.trivial_group = FiniteGroup.trivial()
+        self.cyclic2 = FiniteGroup.cyclic(2)
+        self.cyclic3 = FiniteGroup.cyclic(3)
+        self.dihedral4 = FiniteGroup.dihedral(2)  # D4
 
-    # Constructor Tests
-    def test_init_empty(self):
-        """Test initialization with no parameters."""
-        p = Permutation()
-        print(f"Empty permutation swaps: {p.swaps}")
-        self.assertEqual(p.swaps, [])
+    def test_cyclic_group(self): #noqa
+        g = FiniteGroup.cyclic(4)
+        expected_cayley_table = [
+            [0, 1, 2, 3],
+            [1, 2, 3, 0],
+            [2, 3, 0, 1],
+            [3, 0, 1, 2]
+        ]
+        np.testing.assert_array_equal(g.cayley_table, expected_cayley_table)
 
-    def test_init_swaps(self):
-        """Test initialization with explicit swaps."""
-        swaps = [(0,1), (1,2)]
-        p = Permutation(swaps=swaps)
-        print(f"Initialized with swaps: {swaps}")
-        print(f"Resulting swaps: {p.swaps}")
-        self.assertEqual(p.swaps, swaps)
+    def test_automorphisms(self):
+        # Create Klein four-group V₄
+        klein_four = FiniteGroup(cayley_table=np.array([
+            [0, 1, 2, 3],  # e
+            [1, 0, 3, 2],  # a
+            [2, 3, 0, 1],  # b
+            [3, 2, 1, 0]  # ab
+        ]))
 
-    # of_the_array Tests
-    def test_of_the_array_identity(self):
-        """Test of_the_array with identity permutation [0,1,2]."""
-        arr = [0, 1, 2]
-        p = Permutation.of_the_array(arr)
-        print(f"Input array: {arr}")
-        print(f"Result permutation: {p}")
-        self.assertEqual(p.permuted_array, [])
-        self.assertEqual(str(p), "()")
+        actual_aut = klein_four.automorphism_group
 
-    def test_of_the_array_swap(self):
-        """Test of_the_array with simple swap [1,0,2]."""
-        arr = [1, 0, 2]
-        p = Permutation.of_the_array(arr)
-        print(f"Input array: {arr}")
-        print(f"Result permutation: {p}")
-        self.assertEqual(p.permuted_array, [1, 0])
-        self.assertEqual(str(p), "(0,1)")
+        # Test structural properties
+        self.assertEqual(actual_aut.order, 6, "Automorphism group should have order 6")
 
-    def test_of_the_array_cycle(self):
-        """Test of_the_array with cycle [1,2,0]."""
-        arr = [1, 2, 0]
-        p = Permutation.of_the_array(arr)
-        print(f"Input array: {arr}")
-        print(f"Result permutation: {p}")
-        self.assertEqual(p.permuted_array, arr)
-        self.assertEqual(str(p), "(0,1,2)")
+        # For V₄, all non-identity elements in Aut(V₄) have order 2
+        expected_order_counts = {
+            1: 1,  # identity
+            2: 5  # all other elements
+        }
 
-    def test_of_the_array_duplicates(self):
-        """Test of_the_array with invalid duplicate elements [1,1,2]."""
-        arr = [1, 1, 2]
-        print(f"Testing array with duplicates: {arr}")
-        with self.assertRaises(ValueError) as context:
-            Permutation.of_the_array(arr)
-        print(f"Error raised: {str(context.exception)}")
+        actual_order_counts = defaultdict(int)
+        for element in range(actual_aut.order):
+            element_order = len(actual_aut.orbits[element])
+            actual_order_counts[element_order] += 1
 
-    # of_cyclic_notation Tests
-    def test_cyclic_notation_empty(self):
-        """Test empty cycle notation '()' creates identity permutation."""
-        notation = "()"
-        p = Permutation.of_cyclic_notation(notation)
-        print(f"Cycle notation: {notation}")
-        print(f"Resulting permutation: {p}")
-        self.assertEqual(p.permuted_array, [])
-        self.assertEqual(str(p), "()")
+        self.assertEqual(
+            dict(actual_order_counts),
+            expected_order_counts,
+            "Automorphism group should have correct distribution of element orders"
+        )
 
-    def test_cyclic_notation_swap(self):
-        """Test simple swap cycle notation '(0,1)' creates correct permutation."""
-        notation = "(0,1)"
-        p = Permutation.of_cyclic_notation(notation)
-        print(f"Cycle notation: {notation}")
-        print(f"Resulting permutation: {p}")
-        self.assertEqual(p.permuted_array, [1, 0])
-        self.assertEqual(str(p), "(0,1)")
+        # Verify group properties
+        self.assertFalse(actual_aut.is_abelian, "Automorphism group should be non-abelian")
 
-    def test_cyclic_notation_invalid_chars(self):
-        """Test cycle notation with invalid characters '(a,b)' raises error."""
-        notation = "(a,b)"
-        print(f"Testing invalid notation: {notation}")
-        with self.assertRaises(ValueError) as context:
-            Permutation.of_cyclic_notation(notation)
-        print(f"Error raised: {str(context.exception)}")
+    def test_dihedral_group(self):
+        g = FiniteGroup.dihedral(4)
+        expected_cayley_table = [
+            [0, 1, 2, 3, 4, 5, 6, 7],
+            [1, 2, 3, 0, 5, 6, 7, 4],
+            [2, 3, 0, 1, 6, 7, 4, 5],
+            [3, 0, 1, 2, 7, 4, 5, 6],
+            [4, 5, 6, 7, 0, 1, 2, 3],
+            [5, 6, 7, 4, 1, 2, 3, 0],
+            [6, 7, 4, 5, 2, 3, 0, 1],
+            [7, 4, 5, 6, 3, 0, 1, 2]
+        ]
+        h =  FiniteGroup(cayley_table=np.array(expected_cayley_table))
+        self.assertEqual(g,h)
 
-    # permuted_array Tests
-    def test_permuted_array_trailing_identity(self):
-        """Test permuted_array removes trailing identity mappings [0,2,1,3,4] -> [0,2,1]."""
-        arr = [0, 2, 1, 3, 4]
-        p = Permutation.of_the_array(arr)
-        expected = [0, 2, 1]
-        print(f"Input array: {arr}")
-        print(f"Expected result: {expected}")
-        print(f"Actual result: {p.permuted_array}")
-        self.assertEqual(p.permuted_array, expected)
+    def test_symmetric_group(self):
+        """Test the symmetric group S₃ construction."""
+        g = FiniteGroup.symmetric(3)
 
-    def test_permuted_array_keep_required(self):
-        """Test permuted_array keeps identity mappings required for validation."""
-        arr = [2, 1, 0, 3]
-        p = Permutation.of_the_array(arr)
-        expected = [2, 1, 0]
-        print(f"Input array: {arr}")
-        print(f"Expected result: {expected}")
-        print(f"Actual result: {p.permuted_array}")
-        self.assertEqual(p.permuted_array, expected)
+        # Correct Cayley table for S₃
+        # Elements represent the following permutations:
+        # 0: () or [0,1,2]      (identity)
+        # 1: (12) or [1,0,2]    (swaps 1 and 2)
+        # 2: (23) or [0,2,1]    (swaps 2 and 3)
+        # 3: (13) or [2,1,0]    (swaps 1 and 3)
+        # 4: (123) or [1,2,0]   (cycles 1->2->3->1)
+        # 5: (132) or [2,0,1]   (cycles 1->3->2->1)
+        expected_cayley_table = [
+            [0, 1, 2, 3, 4, 5],
+            [1, 0, 4, 5, 2, 3],
+            [2, 5, 0, 4, 3, 1],
+            [3, 4, 5, 0, 1, 2],
+            [4, 3, 1, 2, 5, 0],
+            [5, 2, 3, 1, 0, 4]
+        ]
+        h = FiniteGroup(cayley_table=np.array(expected_cayley_table))
+        self.assertEqual(g, h)
 
-    # inverse Tests
-    def test_inverse_swap(self):
-        """Test inverse of swap permutation."""
-        p = Permutation.of_cyclic_notation("(0,1)")
-        inv = p.inv
-        print(f"Original permutation: {p}")
-        print(f"Inverse permutation: {inv}")
-        self.assertEqual((p + inv).permuted_array, [])
-        self.assertEqual(str(p + inv), "()")
+        # Additional verifications
+        self.assertEqual(len(g), 6)  # S₃ should have 6 elements
+        self.assertFalse(g.is_abelian)  # S₃ is non-abelian
+        self.assertEqual(len(g.center), 1)  # Center should only contain identity
 
-    def test_inverse_cycle(self):
-        """Test inverse of cycle permutation."""
-        p = Permutation.of_cyclic_notation("(0,1,2)")
-        inv = p.inv
-        print(f"Original permutation: {p}")
-        print(f"Inverse permutation: {inv}")
-        self.assertEqual((p + inv).permuted_array, [])
-        self.assertEqual(str(p + inv), "()")
-    # ---------------------------------------------------
-    # - addition (+) operator
-    def _addition_result(self, p1, p2, expected):
-        result = p1 + p2
-        print(f"Permutation 1: {p1}")
-        print(f"Permutation 2: {p2}")
-        print(f"Result: {result}")
-        self.assertEqual(result.permuted_array, expected)
+    def test_init__empty_table(self):
+        """Test initialization with empty Cayley table"""
+        with self.assertRaises(ValueError):
+            FiniteGroup(cayley_table=np.array([]))
 
-    def test_addition_identity(self):
-        """Test addition of identity permutation."""
-        p = Permutation.of_the_array([0, 1, 2])
-        self._addition_result(p, Permutation(), [])
+    def test_init__non_square_table(self):
+        """Test initialization with non-square Cayley table"""
+        with self.assertRaises(ValueError):
+            FiniteGroup(cayley_table=np.array([[0, 1], [0, 1], [0, 1]]))
 
-    def test_addition_simple(self):
-        """Test addition of two simple permutations: (0,1) + (1,2).
-        This should result in a 3-cycle (0,1,2)."""
-        p1 = Permutation.of_cyclic_notation("(0,1)")
-        p2 = Permutation.of_cyclic_notation("(1,2)")
-        expected = Permutation.of_cyclic_notation("(0,1,2)")
+    def test_init__invalid_identity(self):
+        """Test initialization with invalid identity element"""
+        with self.assertRaises(ValueError):
+            FiniteGroup(cayley_table=np.array([[1, 0], [0, 1]]))
 
-        print(f"p1: {p1}, array: {p1.permuted_array}")
-        print(f"p2: {p2}, array: {p2.permuted_array}")
-        result = p1 + p2
-        print(f"p1 + p2: {result}, array: {result.permuted_array}")
-        print(f"expected: {expected}, array: {expected.permuted_array}")
+    def test_init__invalid_closure(self):
+        """Test initialization with invalid closure"""
+        with self.assertRaises(ValueError):
+            FiniteGroup(cayley_table=np.array([[0, 2], [2, 0]]))
 
-        self.assertEqual(result, expected)
+    def test_order__trivial_group(self):
+        """Test order of trivial group"""
+        self.assertEqual(self.trivial_group.order, 1)
 
-    def test_addition_swap_with_swap(self):
-        """Test adding two swap permutations: [1,0] + [0,1].
-        Should result in identity permutation []."""
-        p1 = Permutation.of_the_array([1, 0])  # (0,1)
-        p2 = Permutation.of_the_array([1, 0])  # (0,1)
-        self._addition_result(p1, p2, [])
+    def test_order__cyclic_group(self):
+        """Test order of cyclic group"""
+        self.assertEqual(self.cyclic3.order, 3)
 
-    def test_addition_cycle_with_inverse(self):
-        """Test adding a 3-cycle with its inverse: [1,2,0] + [2,0,1].
-        Should result in identity permutation []."""
-        p1 = Permutation.of_cyclic_notation("(0,1,2)")  # [1,2,0]
-        p2 = Permutation.of_cyclic_notation("(0,2,1)")  # [2,0,1]
-        result = p1 + p2
-        print(f"Permutation 1 array: {p1.permuted_array} cycles: {p1}")
-        print(f"Permutation 2 array: {p2.permuted_array} cycles: {p2}")
-        print(f"Result array: {result.permuted_array} cycles: {result}")
-        self.assertEqual(result.permuted_array, [])
-        self.assertEqual(str(result), "()")
+    def test_inverse__trivial_group(self):
+        """Test inverse in trivial group"""
+        self.assertEqual(self.trivial_group.inverse(0), 0)
 
-    def test_addition_disjoint_cycles(self):
-        """Test adding two disjoint cycles: (0,1) + (2,3).
-        Should result in both cycles (0,1)(2,3)."""
-        p1 = Permutation.of_cyclic_notation("(0,1)")  # [1,0,2,3]
-        p2 = Permutation.of_cyclic_notation("(2,3)")  # [0,1,3,2]
-        result = p1 + p2
-        print(f"Permutation 1 array: {p1.permuted_array} cycles: {p1}")
-        print(f"Permutation 2 array: {p2.permuted_array} cycles: {p2}")
-        print(f"Result array: {result.permuted_array} cycles: {result}")
-        expected = [1, 0, 3, 2]  # Combined effect of both swaps
-        self.assertEqual(result.permuted_array, expected)
-        self.assertEqual(str(result), "(0,1)(2,3)")
+    def test_inverse__cyclic_group(self):
+        """Test inverse in cyclic group"""
+        self.assertEqual(self.cyclic2.inverse(1), 1)
 
-    def test_addition_overlapping_cycles(self):
-        """Test adding two overlapping cycles: (0,1,2) + (1,2,3).
-        Should result in a permutation that combines their effects."""
-        p1 = Permutation.of_cyclic_notation("(0,1,2)")  # [1,2,0,3]
-        p2 = Permutation.of_cyclic_notation("(1,2,3)")  # [0,2,3,1]
-        result = p1 + p2
-        print(f"Permutation 1 array: {p1.permuted_array} cycles: {p1}")
-        print(f"Permutation 2 array: {p2.permuted_array} cycles: {p2}")
-        print(f"Result array: {result.permuted_array} cycles: {result}")
-        expected = Permutation.of_cyclic_notation("(0,1)(2,3)")
-        self.assertEqual(result, expected)
+    def test_inverse__invalid_element(self):
+        """Test inverse of invalid element"""
+        with self.assertRaises(IndexError):
+            self.cyclic2.inverse(2)
 
-    def test_addition_with_identity(self):
-        """Test adding any permutation with identity permutation.
-        Should result in the original permutation."""
-        p1 = Permutation.of_cyclic_notation("(0,1,2)")  # [1,2,0]
-        p2 = Permutation()  # Identity permutation
-        result = p1 + p2
-        print(f"Permutation 1 array: {p1.permuted_array} cycles: {p1}")
-        print(f"Permutation 2 array: {p2.permuted_array} cycles: {p2}")
-        print(f"Result array: {result.permuted_array} cycles: {result}")
-        self.assertEqual(result, p1)
+    def test_center__trivial_group(self):
+        """Test center of trivial group"""
+        self.assertEqual(self.trivial_group.center, {0})
+        print(f'Center of trivial group: {self.trivial_group.center}...[success]')
 
-    # - subtraction (-) operator
-    def test_subtraction_identity(self):
-        """Test subtraction of identity permutation."""
-        p = Permutation.of_cyclic_notation("(0,1,2)")
-        result = p - Permutation()
-        print(f"Original permutation: {p}")
-        print(f"Identity permutation: {Permutation()}")
-        print(f"Result: {result}")
-        self.assertEqual(result, p)
+    def test_center__cyclic_group(self):
+        """Test center of cyclic group"""
+        self.assertEqual(self.cyclic2.center, {0, 1})
+        print(f'Center of cyclic group: {self.cyclic2.center}...[success]')
 
-    def test_subtraction_simple(self):
-        """Test subtraction of two simple swap permutations."""
-        p1 = Permutation.of_cyclic_notation("(0,1)")
-        p2 = Permutation.of_cyclic_notation("(1,2)")
-        result = p1 - p2
-        expected = Permutation.of_cyclic_notation("(0,1,2)")
+    def test_is_abelian__trivial_group(self):
+        """Test if trivial group is abelian"""
+        self.assertTrue(self.trivial_group.is_abelian)
 
-        print(f"p1: {p1}")
-        print(f"p2: {p2}")
-        print(f"p2.inv: {p2.inv}")
-        print(f"result = p1 - p2: {result}")
-        print(f"expected: {expected}")
+    def test_is_abelian__cyclic_group(self):
+        """Test if cyclic group is abelian"""
+        self.assertTrue(self.cyclic3.is_abelian)
 
-        self.assertEqual(result, expected)
+    def test_is_abelian__non_abelian_group(self):
+        """Test if dihedral group is non-abelian"""
+        self.assertFalse(FiniteGroup.alternating(5).is_abelian)
 
-    def test_subtraction_cycle(self):
-        """Test subtraction of cycle permutations: (0,1,2) - (0,2,1).
-        p1 = (0,1,2)  maps: 0->1, 1->2, 2->0
-        p2 = (0,2,1)  maps: 0->2, 2->1, 1->0
-        p2.inv = (0,1,2)
-        Therefore p1 - p2 = (0,1,2) + (0,1,2) = (0,2,1)"""
-        p1 = Permutation.of_cyclic_notation("(0,1,2)")
-        p2 = Permutation.of_cyclic_notation("(0,2,1)")
-        expected = Permutation.of_cyclic_notation("(0,2,1)")
+    def test_conjugate__trivial_group(self):
+        """Test conjugation in trivial group"""
+        self.assertEqual(self.trivial_group.conjugate(0, 0), 0)
 
-        print(f"p1: {p1}, maps: {p1.permuted_array}")
-        print(f"p2: {p2}, maps: {p2.permuted_array}")
-        print(f"p2.inv: {p2.inv}, maps: {p2.inv.permuted_array}")
-        result = p1 - p2
-        print(f"p1 - p2: {result}, maps: {result.permuted_array}")
-        print(f"expected: {expected}, maps: {expected.permuted_array}")
+    def test_conjugate__cyclic_group(self):
+        """Test conjugation in cyclic group"""
+        self.assertEqual(self.cyclic2.conjugate(0, 1), 1)
+        self.assertEqual(self.cyclic2.conjugate(1, 1), 1)
 
-        self.assertEqual(result, expected)
+    def test_conjugacy_class__trivial_group(self):
+        """Test conjugacy class in trivial group"""
+        self.assertEqual(self.trivial_group.conjugacy_class(0), {0})
 
-    def test_subtraction_multi_cycle_permutations(self):
-        """Test subtraction of two multi-cycle permutations."""
-        p1 = Permutation.of_cyclic_notation("(0,1)(2,3)")
-        p2 = Permutation.of_cyclic_notation("(0,2)(1,3)")
-        result = p1 - p2
-        expected = Permutation.of_cyclic_notation("(0,3)(1,2)")
+    def test_conjugacy_class__cyclic_group(self):
+        """Test conjugacy class in cyclic group"""
+        self.assertEqual(self.cyclic2.conjugacy_class(1), {1})
 
-        print(f"p1: {p1}, maps: {p1.permuted_array}")
-        print(f"p2: {p2}, maps: {p2.permuted_array}")
-        print(f"p2.inv: {p2.inv}, maps: {p2.inv.permuted_array}")
-        print(f"result = p1 - p2: {result}, maps: {result.permuted_array}")
-        print(f"expected: {expected}, maps: {expected.permuted_array}")
+    def test_conjugacy_class__invalid_element(self):
+        """Test conjugacy class of invalid element"""
+        with self.assertRaises(IndexError):
+            self.cyclic2.conjugacy_class(2)
 
-        self.assertEqual(result, expected)
+    def test_orbits__trivial_group(self):
+        """Test orbits in trivial group"""
+        self.assertEqual(self.trivial_group.orbits, {0: {0}})
 
-    # - equality (==) operator
-    def test_equality_identity(self):
-        """Test equality of identity permutation."""
-        p1 = Permutation()
-        p2 = Permutation()
-        print(f"Permutation 1: {p1}")
-        print(f"Permutation 2: {p2}")
-        self.assertEqual(p1, p2)
+    def test_orbits__cyclic_group(self):
+        """Test orbits in cyclic group"""
+        self.assertEqual(self.cyclic2.orbits[1], {0, 1})
 
-    def test_equality_simple(self):
-        """Test equality of two simple swap permutations."""
-        p1 = Permutation.of_cyclic_notation("(0,1)")
-        p2 = Permutation.of_the_array([1, 0])
-        print(f"Permutation 1: {p1}")
-        print(f"Permutation 2: {p2}")
-        self.assertEqual(p1, p2)
 
-    def test_equality_cycle(self):
-        """Test equality of two simple cycle permutations."""
-        p1 = Permutation.of_the_array([1, 2, 0])
-        p2 = Permutation.of_cyclic_notation("(0,1,2)")
-        print(f"Permutation 1: {p1}")
-        print(f"Permutation 2: {p2}")
-        self.assertEqual(p1, p2)
 
-    def test_equality_multi_cycle_permutations(self):
-        """Test equality of two multi-cycle permutations."""
-        p1 = Permutation.of_the_array([1, 0, 2, 4, 3])
-        p2 = Permutation.of_cyclic_notation("(0,1)(3,4)")
-
-        print(f"Permutation 1: {p1}")
-        print(f"Permutation 2: {p2}")
-        self.assertEqual(p1, p2)
-
-    # - cycles property
-    def test_cycles_identity(self):
-        """Test cycles of identity permutation."""
-        p = Permutation()
-        print(f"Identity permutation: {p}")
-        print(f"Cycles: {p.cycles}")
-        self.assertEqual(p.cycles, [])
-
-    def test_cycles_simple(self):
-        """Test cycles of simple swap permutation."""
-        p = Permutation.of_cyclic_notation("(0,1)")
-        print(f"Simple swap permutation: {p}")
-        print(f"Cycles: {p.cycles}")
-        self.assertEqual(p.cycles, [[0, 1]])
-
-    def test_cycles_cycle(self):
-        """Test cycles of simple cycle permutation."""
-        p = Permutation.of_cyclic_notation("(0,1,2)")
-        print(f"Simple cycle permutation: {p}")
-        print(f"Cycles: {p.cycles}")
-        self.assertEqual(p.cycles, [[0, 1, 2]])
-
-    def test_cycles_multi_cycle_permutations(self):
-        """Test cycles of multi-cycle permutation."""
-        p = Permutation.of_cyclic_notation("(0,1)(3,4)")
-        print(f"Multi-cycle permutation: {p}")
-        print(f"Cycles: {p.cycles}")
-        self.assertEqual(p.cycles, [[0, 1], [3, 4]])
-
-    # - generator method
-    def test_generator(self):
-        """Test generator method."""
-        n = 3
-        permutations = list(Permutation.generator(n))
-        print(f"Permutations of size {n}: {permutations}")
-        self.assertEqual(len(permutations), 6)
-
-    # - random method
-    def test_random(self):
-        """Test random method."""
-        n = 3
-        p = Permutation.random(n)
-        print(f"Random permutation of size {n}: {p}")
-        self.assertEqual(len(p.permuted_array), n)
+if __name__ == '__main__':
+    unittest.main()
